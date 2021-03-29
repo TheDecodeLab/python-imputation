@@ -3,8 +3,7 @@ python-imputation
 
 **This is an under development repository!**
 
-# The final clean notebook is here.
-
+### The final clean notebook:
 You can fnid the course program and the videos [HERE](https://github.com/TheDecodeLab/python-imputation/blob/main/imputation_clean.ipynb).
 
 
