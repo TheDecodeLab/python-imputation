@@ -1,6 +1,16 @@
 python-imputation
 =======
 
+**This is an under development repository!**
+
+# The final clean notebook is here.
+
+You can fnid the course program and the videos [HERE](https://github.com/TheDecodeLab/python-imputation/blob/main/imputation_clean.ipynb).
+
+
+- [Sympy_intro](https://github.com/TheDecodeLab/python-imputation/blob/main/imputation_clean.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TheDecodeLab/python-imputation/blob/main/imputation_clean.ipynb)
+
+
 This is supposed to include all of the scropts we have so far for the imputation project with Python. 
 
 **Installation:**
