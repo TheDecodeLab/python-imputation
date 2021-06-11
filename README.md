@@ -3,6 +3,13 @@ python-imputation
 
 ## **This is an under development repository!**
 
+
+### To run the app
+You need to change your current directory to the __app__ and run:
+```
+$ streamlit run app.py
+```
+
 ### The final clean notebook:
 You can fnid the course program and the videos [HERE](https://github.com/TheDecodeLab/python-imputation/blob/main/imputation_clean.ipynb).
 
