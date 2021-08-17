@@ -8,13 +8,19 @@ import tempfile
 import pandas as pd
 import sklearn as sk
 from tqdm import tqdm
-from pathlib import Path
 from copy import deepcopy
 from scipy.stats import ttest_ind
 from sklearn.metrics import r2_score
 
 import matplotlib.patches as mpatches
 from sklearn.neighbors import KernelDensity
+
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras.models import Model
+from tensorflow.python.keras.layers import deserialize, serialize
+from tensorflow.python.keras.saving import saving_utils
 
 def data_load(prefix='data/',i=0,part = '1st'):
     frame = {'data':[],'masked':[]}
@@ -359,7 +365,7 @@ class Imputer:
     
         ilf = self.loss_frame.shape[0]
         
-        pbar = tqdm(total=n_it*len(inds), position=0, leave=True)
+        pbar = tqdm(total=n_it*len(inds))
         
         for i in range(n_it):
             for j in range(len(inds)):
@@ -461,7 +467,6 @@ class Imputer:
 
 
     def save(self,fname):
-        Path(fname).mkdir(parents=True, exist_ok=True)
         self.loss_frame.to_csv(fname+'loss_frame.csv',index=0)
         save(fname+'model.pkl',self.models)
         if self.history:
@@ -556,7 +561,7 @@ class Imputer:
 #            lsses.append(self.metric_opt(metr_dict[key],truth))
             lsses.append(metric_opt(self,metr_dict[key],truth))
         lsses = np.array(lsses)
-        df = pd.DataFrame(data=lsses.T,index=self.cols,columns=metr_dict.keys())
+        df = pd.DataFrame(data=lsses.T,columns=metr_dict.keys())
         df = df.apply(pd.to_numeric, errors='ignore')
         return df
         
@@ -582,142 +587,139 @@ class Imputer:
         else:
             self.models[col] = self.model_class()
 
-try:
-    import cudf
-    import cupy as cp
-    import tensorflow as tf
+import cudf
+import cupy as cp
+import tensorflow as tf
 
-    class GImputer(Imputer):
-        def __init__(self,data_frame,model,loss_f=None,fill_method='random',save_history=False):
-            assert tf.test.is_built_with_cuda(),'No installed GPU is found!'
-            print('Available physical devices are: ',tf.config.list_physical_devices())
+class GImputer(Imputer):
+    def __init__(self,data_frame,model,loss_f=None,fill_method='random',save_history=False):
+        assert tf.test.is_built_with_cuda(),'No installed GPU is found!'
+        print('Available physical devices are: ',tf.config.list_physical_devices())
+        
+        self.data_frame = data_frame
+        self.data_frame = self.data_frame.apply(lambda x: x.astype(np.float32))
+        self.disna = self.data_frame.isna()
+        self.disna = cudf.from_pandas(self.disna)
+        self.data_frame = cudf.from_pandas(self.data_frame)
+        
+        if type(model) is str:
+            self.model_class = get_model(model,gpu=True)
+        elif type(model) is dict:
+            self.model_class = {col:get_model(m,gpu=True)() for col,m in model.items()}
+        else:
+            self.model_class = model
+            pass #TODO check the needed methods
+        
+        self.cols = data_frame.columns
+        self.ncol = len(self.cols)
+        self.save_history = save_history
+        self.history = 0
+        if self.save_history:
+            self.history = {i:[] for i in self.cols}
+        
+        if fill_method=='random':
+            self.data_frame = fill_random(self.data_frame)
+        elif fill_method=='mean':
+            self.data_frame = self.data_frame.fillna(dd.mean())
+        else:
+            assert 0,'fill_mothod is not recognized!'
+        
+        if loss_f is None:
+            from cuml.metrics import mean_squared_error
+            self.loss_f = mean_squared_error
+            
+        self.loss_frame = cudf.DataFrame(columns=self.cols)
+        if type(self.model_class) is dict:
+            self.models = self.model_class
+        else:
+            self.models = {col:None for col in self.cols}
 
-            self.data_frame = data_frame
-            self.data_frame = self.data_frame.apply(lambda x: x.astype(np.float32))
-            self.disna = self.data_frame.isna()
-            self.disna = cudf.from_pandas(self.disna)
-            self.data_frame = cudf.from_pandas(self.data_frame)
+    def impute(self,n_it,inds=None,trsh=-np.inf,**kargs):
+        if inds is None:
+            inds = np.arange(self.ncol)
+            np.random.shuffle(inds)
+    
+        self.to_gpu()
+        
+        ilf = self.loss_frame.shape[0]
+        
+        pbar = tqdm(total=n_it*len(inds))
+        
+        for i in range(n_it):
+            clses = []
+            for j in range(len(inds)):
+                pbar.update(1)
 
-            if type(model) is str:
-                self.model_class = get_model(model,gpu=True)
-            elif type(model) is dict:
-                self.model_class = {col:get_model(m,gpu=True)() for col,m in model.items()}
-            else:
-                self.model_class = model
-                pass #TODO check the needed methods
+                col = self.cols[inds[j]]
+                fisna = self.disna[col]
+                if fisna.mean()==0:
+#                     self.loss_frame.loc[ilf+i,col] = 0
+                    newrow = cudf.DataFrame(index=[ilf+i],columns=[col],data=[0])
+                    self.loss_frame = self.loss_frame.append(newrow)
+                    
+                    continue
 
-            self.cols = data_frame.columns
-            self.ncol = len(self.cols)
-            self.save_history = save_history
-            self.history = 0
-            if self.save_history:
-                self.history = {i:[] for i in self.cols}
-
-            if fill_method=='random':
-                self.data_frame = fill_random(self.data_frame)
-            elif fill_method=='mean':
-                self.data_frame = self.data_frame.fillna(dd.mean())
-            else:
-                assert 0,'fill_mothod is not recognized!'
-
-            if loss_f is None:
-                from cuml.metrics import mean_squared_error
-                self.loss_f = mean_squared_error
-
-            self.loss_frame = cudf.DataFrame(columns=self.cols)
-            if type(self.model_class) is dict:
-                self.models = self.model_class
-            else:
-                self.models = {col:None for col in self.cols}
-
-        def impute(self,n_it,inds=None,trsh=-np.inf,**kargs):
-            if inds is None:
-                inds = np.arange(self.ncol)
-                np.random.shuffle(inds)
-
-            self.to_gpu()
-
-            ilf = self.loss_frame.shape[0]
-
-            pbar = tqdm(total=n_it*len(inds))
-
-            for i in range(n_it):
-                clses = []
-                for j in range(len(inds)):
-                    pbar.update(1)
-
-                    col = self.cols[inds[j]]
-                    fisna = self.disna[col]
-                    if fisna.mean()==0:
-    #                     self.loss_frame.loc[ilf+i,col] = 0
-                        newrow = cudf.DataFrame(index=[ilf+i],columns=[col],data=[0])
+                if i>2:
+                    c_loss = self.loss_frame.iloc[-1][col]
+                    if c_loss<trsh:
+#                         self.loss_frame.loc[ilf+i,col] = c_loss
+                        newrow = cudf.DataFrame(index=[ilf+i],columns=[col],data=[c_loss])
                         self.loss_frame = self.loss_frame.append(newrow)
-
                         continue
 
-                    if i>2:
-                        c_loss = self.loss_frame.iloc[-1][col]
-                        if c_loss<trsh:
-    #                         self.loss_frame.loc[ilf+i,col] = c_loss
-                            newrow = cudf.DataFrame(index=[ilf+i],columns=[col],data=[c_loss])
-                            self.loss_frame = self.loss_frame.append(newrow)
-                            continue
+                x = self.data_frame.drop(columns=[col])
+                y = self.data_frame[col]
 
-                    x = self.data_frame.drop(columns=[col])
-                    y = self.data_frame[col]
+                x_train = x[~fisna]
+                y_train = y[~fisna]
+                x_test = x[fisna]
+                y_test = y[fisna]
 
-                    x_train = x[~fisna]
-                    y_train = y[~fisna]
-                    x_test = x[fisna]
-                    y_test = y[fisna]
+                if self.models[col] is None:
+                    model = self.model_class()
+                    self.models[col] = model
+                else:
+                    model = self.models[col]
 
-                    if self.models[col] is None:
-                        model = self.model_class()
-                        self.models[col] = model
-                    else:
-                        model = self.models[col]
+                model.fit(x_train,y_train,**kargs)
+                pred = model.predict(x_test)
+                if pred.ndim>1:
+                    pred = pred[:,0]
 
-                    model.fit(x_train,y_train,**kargs)
-                    pred = model.predict(x_test)
-                    if pred.ndim>1:
-                        pred = pred[:,0]
+                c_loss = self.loss_f(y_test,pred)
+                clses.append(c_loss)
+                if type(pred) is cudf.Series:
+                    pred = pred.to_array()
+                self.data_frame.loc[fisna,col] = pred
+                nn = self.data_frame[col].isna().sum()
+                assert nn==0,'{}   {}   {}   {}'.format(col,fisna.sum(),pred.shape,nn)
+                
+                if self.save_history:
+                    self.history[col].append(pred)
+                    
+#             self.loss_frame.loc[ilf+i,col] = self.loss_f(y_test,pred)
+            clses = cp.stack(clses)
+            clses = clses.reshape(1,-1)
+            newrow = cudf.DataFrame(index=[ilf+i],columns=self.cols[inds],data=clses)
+            self.loss_frame = self.loss_frame.append(newrow)
+        pbar.close()
+        self.to_cpu()
 
-                    c_loss = self.loss_f(y_test,pred)
-                    clses.append(c_loss)
-                    if type(pred) is cudf.Series:
-                        pred = pred.to_array()
-                    self.data_frame.loc[fisna,col] = pred
-                    nn = self.data_frame[col].isna().sum()
-                    assert nn==0,'{}   {}   {}   {}'.format(col,fisna.sum(),pred.shape,nn)
+    def to_cpu(self):
+        if type(self.loss_frame) is cudf.DataFrame:
+            self.loss_frame = self.loss_frame.to_pandas()
+        if type(self.data_frame) is cudf.DataFrame:
+            self.data_frame = self.data_frame.to_pandas()
+        if type(self.disna) is cudf.DataFrame:
+            self.disna = self.disna.to_pandas()
 
-                    if self.save_history:
-                        self.history[col].append(pred)
-
-    #             self.loss_frame.loc[ilf+i,col] = self.loss_f(y_test,pred)
-                clses = cp.stack(clses)
-                clses = clses.reshape(1,-1)
-                newrow = cudf.DataFrame(index=[ilf+i],columns=self.cols[inds],data=clses)
-                self.loss_frame = self.loss_frame.append(newrow)
-            pbar.close()
-            self.to_cpu()
-
-        def to_cpu(self):
-            if type(self.loss_frame) is cudf.DataFrame:
-                self.loss_frame = self.loss_frame.to_pandas()
-            if type(self.data_frame) is cudf.DataFrame:
-                self.data_frame = self.data_frame.to_pandas()
-            if type(self.disna) is cudf.DataFrame:
-                self.disna = self.disna.to_pandas()
-
-        def to_gpu(self):
-            if type(self.loss_frame) is pd.DataFrame:
-                self.loss_frame = cudf.from_pandas(self.loss_frame)
-            if type(self.data_frame) is pd.DataFrame:
-                self.data_frame = cudf.from_pandas(self.data_frame)
-            if type(self.disna) is pd.DataFrame:
-                self.disna = cudf.from_pandas(self.disna)     
-except:
-    print('GPU functionality is not available!')
+    def to_gpu(self):
+        if type(self.loss_frame) is pd.DataFrame:
+            self.loss_frame = cudf.from_pandas(self.loss_frame)
+        if type(self.data_frame) is pd.DataFrame:
+            self.data_frame = cudf.from_pandas(self.data_frame)
+        if type(self.disna) is pd.DataFrame:
+            self.disna = cudf.from_pandas(self.disna)        
 
 def metric_opt(self,metric_f,truth):
     lsses = []
@@ -786,7 +788,38 @@ def unpack(model, training_config, weights):
     restored_model.set_weights(weights)
     return restored_model
 
+# Hotfix function
+def make_keras_picklable():
 
+    def __reduce__(self):
+        model_metadata = saving_utils.model_metadata(self)
+        training_config = model_metadata.get("training_config", None)
+        model = serialize(self)
+        weights = self.get_weights()
+        return (unpack, (model, training_config, weights))
+
+    cls = Model
+    cls.__reduce__ = __reduce__
+
+
+def dense_model(inp,out,nlayer,batchnorm=False,dropout=False,loss='mean_squared_error',optimizer='adam',kernel_initializer='normal'):
+    dims = np.linspace(inp,out,nlayer).astype(int)[1:-1]
+    input_img = keras.Input(shape=inp)
+    x = input_img
+    for dim in dims:
+        x = layers.Dense(dim, kernel_initializer=kernel_initializer, activation='relu')(x)
+        if batchnorm:
+            x = layers.BatchNormalization()(x)
+        if dropout!=0:
+            x = layers.Dropout(dropout)(x)
+    # create model
+    if dropout!=0:
+        x = layers.Dropout(dropout)(x)
+    x = layers.Dense(out, kernel_initializer='normal')(x)
+    
+    model = keras.Model(input_img, x)
+    model.compile(loss=loss, optimizer=optimizer)
+    return model
 
 
 def in_notebook():
@@ -807,4 +840,38 @@ def load(fname):
         return pickle.load(handle)
 
 
+def missing_simulation(data,ref_cols,target_cols,lower,upper,inner,miss1,miss2,miss3):
+    masked = deepcopy(data)
+    ndata = masked.shape[0]
+    ntar = len(target_cols)
+    refs = data[ref_cols]
+    refs = set_mean_std(refs)
+    refs = refs.sum(axis=1)
 
+    lower = np.percentile(refs,lower)
+    upper = np.percentile(refs,upper)
+
+    if inner:
+        filt = (lower<refs) & (refs<upper)
+    else:
+        filt = (lower>refs) | (refs>upper)
+
+    # refs.loc[filt].index
+    inds = np.argwhere(filt.values)
+    inds = inds.reshape(-1)
+    ninds = len(inds)
+    rind = np.arange(ndata)
+    np.random.shuffle(rind)
+    n_miss = int(miss1*ninds)
+    rind = rind[:n_miss]
+
+    mask = np.random.uniform(0,1,(n_miss,ntar))
+    mask = (miss2<mask).astype(float)
+    mask[mask==0] = np.nan
+    masked.loc[rind,target_cols] *= mask
+
+    mask = np.random.uniform(0,1,masked.shape)
+    mask = (miss3<mask).astype(float)
+    mask[mask==0] = np.nan
+    masked *= mask
+    return masked

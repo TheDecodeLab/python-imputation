@@ -8,13 +8,19 @@ import tempfile
 import pandas as pd
 import sklearn as sk
 from tqdm import tqdm
-from pathlib import Path
 from copy import deepcopy
 from scipy.stats import ttest_ind
 from sklearn.metrics import r2_score
 
 import matplotlib.patches as mpatches
 from sklearn.neighbors import KernelDensity
+
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras.models import Model
+from tensorflow.python.keras.layers import deserialize, serialize
+from tensorflow.python.keras.saving import saving_utils
 
 def data_load(prefix='data/',i=0,part = '1st'):
     frame = {'data':[],'masked':[]}
@@ -29,30 +35,19 @@ def data_load(prefix='data/',i=0,part = '1st'):
             frame['masked'] = result[key]
     return frame
 
-def get_range(xx):
-    xmin = np.nanmin(xx,axis=0,keepdims=1)
-    xmax = np.nanmax(xx,axis=0,keepdims=1)
-    return xmin,xmax
+def get_rescale(xx):
+    normin = np.nanmin(xx,axis=0,keepdims=1)
+    normax = np.nanmax(xx,axis=0,keepdims=1)
+    return normin,normax
     
-def set_range(xx,xmin=0,xmax=1):
-    xx = (xx-xmin)/(xmax-xmin)
+def set_rescale(xx,normin,normax):
+    xx = (xx-normin)/(normax-normin)
+#     xx = xx/normax
     return xx
 
-def get_mean_std(xx):
-    xmean = np.nanmean(xx,axis=0,keepdims=1)
-    xstd = np.nanstd(xx,axis=0,keepdims=1)
-    return xmean,xstd
-
-def set_mean_std(xx,xmean=0,xstd=1):
-    normean0 = np.nanmean(xx,axis=0,keepdims=1)
-    norstd0 = np.nanstd(xx,axis=0,keepdims=1)
-    xx = (xx-normean0)/norstd0
-    xx = xmean+xstd*xx
+def res_rescale(xx,normin,normax):
+    xx = xx*(normax-normin)+normin
     return xx
-
-# def res_rescale(xx,normin,normax):
-#     xx = xx*(normax-normin)+normin
-#     return xx
 
 def fill_random(df):
     dd = deepcopy(df)
@@ -73,6 +68,9 @@ def gfill_random(df):
         smiss = dd[col].dropna().sample(nmiss,replace=1).values
         dd.loc[fmiss,col] = smiss
     return dd
+
+# dd = fill_random(dd)
+# dd
 
 
 def get_model(model,gpu=False):
@@ -172,12 +170,45 @@ def get_model(model,gpu=False):
             model_class = XGBClassifier           
 
         else:
+#             models_dict = {'LR-r':'Linear Regression',
+#                            'SVR-r':'Support Vector Resreggor',
+#                            'SGD-r':'Stochastic Gradient Descent Regressor',
+#                            'Ridge-r':'Ridge Regressor',
+#                            'Lasso-r':'Lasso Regressor',
+#                            'ElasticNet-r':'ElasticNet Regressor',
+#                            'BRidge-r':'Bayesian Ridge',
+#                            'KNN-r':'KNeighbors Regressor',
+#                            'GP-r':'Gaussian Process Regressor',
+#                            'DT-r':'Decision Tree Regressor',
+#                            'ET-r':'Extra Tree Regressor',
+#                            'GB-r':'Gradient Boosting Regressor',
+#                            'Ada-r':'Ada Boost Regressor',
+#                            'RF-r':'Random Forest Regressor',
+#                            'ExT-r':'Extra Trees Regressor',
+#                            'Bag-r':'Bagging Regressor',
+#                            'XGB-r':'XGBoost Regressor'
+#                           }
             print('implimented regression models are:')
             for k,v in cpu_regressors_list().items():
                 print(68*'-')
                 print('| {:12s} | {:50s}|'.format(k,v))
             print(68*'-')
             print()
+#             models_dict = {'LR-c':'Logistic Regression',
+#                            'SVM-c':'Support Vector Classifier',
+#                            'SGD-c':'Stochastic Gradient Descent Classifier',
+#                            'Ridge-c':'Ridge Classifier',
+#                            'KNN-c':'KNeighbors Classifier',
+#                            'GP-c':'Gaussian Process Classifier',
+#                            'DT-c':'Decision Tree Classifier',
+#                            'GB-c':'Gradient Boosting Classifier',
+#                            'Ada-c':'Ada Boost Classifier',
+#                            'RF-c':'Random Forest Classifier',
+#                            'ET-c':'Extra Tree Classifier',
+#                            'ExT-c':'Extra Trees Classifier',
+#                            'Bag-c':'Bagging Classifier',
+#                            'XGB-c':'XGBoost Classifier'
+#                           }
             print('implimented classification models are:')
             for k,v in cpu_classifiers_list().items():
                 print(68*'-')
@@ -212,9 +243,7 @@ def get_model(model,gpu=False):
             model_class = RandomForestRegressor
         elif model=='XGB-r':
             from xgboost import XGBRegressor
-            def XGBRegressor_p(**kargs):
-                return XGBRegressor(tree_method='gpu_hist',**kargs)
-            model_class = XGBRegressor_p
+            model_class = XGBRegressor
         elif model=='LR-c':
             from cuml.linear_model import LogisticRegression
             model_class = LogisticRegression
@@ -232,17 +261,32 @@ def get_model(model,gpu=False):
             model_class = RandomForestClassifier
         elif model=='XGB-c':
             from xgboost import XGBClassifier
-            def XGBClassifier_p(**kargs):
-                return XGBClassifier(tree_method='gpu_hist',**kargs)
-            model_class = XGBClassifier_p
+            model_class = XGBClassifier
 
         else:
+#             models_dict = {'LR-r':'Linear Regression',
+#                            'SVR-r':'Support Vector Resreggor',
+#                            'SGD-r':' Stochastic Gradient Descent Regressor',
+#                            'Ridge-r':'Ridge Regressor',
+#                            'Lasso-r':'Lasso Regressor',
+#                            'ElasticNet-r':'ElasticNet Regressor',
+#                            'KNN-r':'KNeighbors Regressor',
+#                            'RF-r':'Random Forest Regressor',
+#                            'XGB-r':'XGBoost Regressor' 
+#                           }
             print('implimented regression models are:')
             for k,v in gpu_regressors_list().items():
                 print(68*'-')
                 print('| {:12s} | {:50s}|'.format(k,v))
             print(68*'-')
             print()
+#             models_dict = {'LR-c':'Logistic Regression',
+#                            'SVM-c':'Support Vector Classifier',
+#                            'SGD-c':' Stochastic Gradient Descent Classifier',
+#                            'KNN-c':'KNeighbors Classifier',
+#                            'RF-c':'Random Forest Classifier',
+#                            'XGB-c':'XGBoost Classifier' 
+#                           }
             print('implimented classification models are:')
             for k,v in gpu_classifiers_list().items():
                 print(68*'-')
@@ -319,6 +363,79 @@ class Imputer:
             self.model_class = get_model(model,gpu=False)
         elif type(model) is dict:
             self.model_class = {col:get_model(m,gpu=False)() for col,m in model.items()}
+#             if model=='LR':
+#                 from sklearn.linear_model import LinearRegression
+#                 self.model_class = LinearRegression
+#             elif model=='SVR':
+#                 from sklearn.svm import SVR
+#                 self.model_class = SVR
+#             elif model=='SGD':
+#                 from sklearn.linear_model import SGDRegressor
+#                 self.model_class = SGDRegressor
+#             elif model=='Ridge':
+#                 from sklearn.linear_model import Ridge
+#                 self.model_class = Ridge
+#             elif model=='Lasso':
+#                 from sklearn.linear_model import Lasso
+#                 self.model_class = Lasso          
+#             elif model=='ElasticNet':
+#                 from sklearn.linear_model import ElasticNet
+#                 self.model_class = ElasticNet
+#             elif model=='KNN':
+#                 from sklearn.neighbors import KNeighborsRegressor
+#                 self.model_class = KNeighborsRegressor
+#             elif model=='GP':
+#                 from sklearn.gaussian_process import GaussianProcessRegressor
+#                 self.model_class = GaussianProcessRegressor
+#             elif model=='DT':
+#                 from sklearn.tree import DecisionTreeRegressor
+#                 self.model_class = DecisionTreeRegressor          
+#             elif model=='GB':
+#                 from sklearn.ensemble import GradientBoostingRegressor
+#                 self.model_class = GradientBoostingRegressor
+#             elif model=='Ada':
+#                 from sklearn.ensemble import AdaBoostRegressor
+#                 self.model_class = AdaBoostRegressor
+#             elif model=='RF':
+#                 from sklearn.ensemble import RandomForestRegressor
+#                 self.model_class = RandomForestRegressor
+#             elif model=='ET':
+#                 from sklearn.tree import ExtraTreeRegressor
+#                 self.model_class = ExtraTreeRegressor
+#             elif model=='ExT':
+#                 from sklearn.ensemble import ExtraTreesRegressor
+#                 self.model_class = ExtraTreesRegressor 
+#             elif model=='Bag':
+#                 from sklearn.ensemble import BaggingRegressor
+#                 self.model_class = BaggingRegressor
+#             elif model=='XGB':
+#                 from xgboost import XGBRegressor
+#                 self.model_class = XGBRegressor             
+#             else:
+#                 models_dict = {'LR':'Linear Regression',
+#                                'SVR':'Support Vector Resreggor',
+#                                'SGD':' Stochastic Gradient Descent Regressor',
+#                                'Ridge':'Ridge Regressor',
+#                                'Lasso':'Lasso Regressor',
+#                                'ElasticNet':'ElasticNet Regressor',
+#                                'KNN':'KNeighbors Regressor',
+#                                'GP':'Gaussian Process Regressor',
+#                                'DT':'Decision Tree Regressor',
+#                                'ET':'Extra Tree Regressor',
+#                                'GB':'Gradient Boosting Regressor',
+#                                'Ada':'Ada Boost Regressor',
+#                                'RF':'Random Forest Regressor',
+#                                'ExT':'Extra Trees Regressor',
+#                                'Bag':'Bagging Regressor',
+#                                'XGB':'XGBoost Regressor' 
+#                               }
+#                 print('implimented models are:')
+#                 for k,v in models_dict.items():
+#                     print(55*'-')
+#                     print('| {:10s} | {:40s}|'.format(k,v))
+#                 print(55*'-')
+            
+#                 assert 0,'The model is not recognized!'
         else:
             self.model_class = model
             pass #TODO check the needed methods
@@ -347,11 +464,6 @@ class Imputer:
         else:
             self.models = {col:None for col in self.cols}
 
-    def manual_model_init(self,**kargs):
-        if self.models[col] is None:
-            model = self.model_class(**kargs)
-            self.models[col] = model
-
     def impute(self,n_it,inds=None,trsh=-np.inf,**kargs):
         if inds is None:
             inds = np.arange(self.ncol)
@@ -359,10 +471,14 @@ class Imputer:
     
         ilf = self.loss_frame.shape[0]
         
-        pbar = tqdm(total=n_it*len(inds), position=0, leave=True)
+        pbar = tqdm(total=n_it*len(inds))
         
+#        for i in tqdm(range(n_it)):
+#            for j in tqdm(range(len(inds)), leave=False):
         for i in range(n_it):
             for j in range(len(inds)):
+#                perc = 100*(i*self.ncol+ji+1)/(n_it*self.ncol)
+#                print('{:6.2f}%  <{:100s}>'.format( perc,int(perc)*'=' ),end='\r')
                 pbar.update(1)
 
                 col = self.cols[inds[j]]
@@ -385,12 +501,15 @@ class Imputer:
                 x_test = x[fisna]
                 y_test = y[fisna]
 
+#                 inp = x_train.shape[1]
+#                 out = 1
                 if self.models[col] is None:
                     model = self.model_class()
                     self.models[col] = model
                 else:
                     model = self.models[col]
 
+        #         print(col)
                 model.fit(x_train,y_train,**kargs)
                 pred = model.predict(x_test)
                 if pred.ndim>1:
@@ -404,16 +523,10 @@ class Imputer:
 
     def plot_loss_frame(self,ax=None):
         if ax is None:
-            fig,ax = plt.subplots(1,1,figsize=(15,7))
+            fig,ax = plt.subplots(1,1,figsize=(10,7))
         for lcol in self.loss_frame.columns:
             ax.plot(self.loss_frame[lcol])
-        ax.set_xlim(0,self.loss_frame.shape[0]-1)
-        ax.set_xlabel('iteration #', fontsize=20)
-        ax.set_ylabel('loss function', fontsize=20)
-        ax.tick_params(axis='both', which='major', labelsize=15)
-        # ax.tick_params(axis='both', which='minor', labelsize=8)
         ax.set_yscale('log')
-        plt.tight_layout()
         return ax
 
     def compare(self,truth,com_f=None,ax=None,width=0.35,legend=True,with_random=True,save=None):
@@ -443,17 +556,6 @@ class Imputer:
             ax.bar(x,lsses, width,color='b',label='imputed')
         if legend: ax.legend()
         
-        # Add some text for labels, title and custom x-axis tick labels, etc.
-        ax.set_ylabel('comparison function', fontsize=20)
-        ax.set_xticks(np.arange(self.ncol))
-        ax.set_xticklabels(self.cols,rotation=90)
-        ax.set_xlim(-1,self.ncol)
-        # ax.set_yscale('log')
-        ax.tick_params(axis='both', which='major', labelsize=20)
-        ax.tick_params(axis='both', which='minor', labelsize=15)
-        # ax.legend(fontsize=20)
-        plt.tight_layout()
-        
         if save is not None:
             plt.savefig(save+'.jpg',dpi=200)
         
@@ -461,7 +563,6 @@ class Imputer:
 
 
     def save(self,fname):
-        Path(fname).mkdir(parents=True, exist_ok=True)
         self.loss_frame.to_csv(fname+'loss_frame.csv',index=0)
         save(fname+'model.pkl',self.models)
         if self.history:
@@ -476,7 +577,7 @@ class Imputer:
                 fisna = self.disna[col]
                 self.data_frame.loc[fisna,col] = self.history[col][-1]
 
-    def dist(self,col,truth=None,cl=25,bandwidth=None,ax=None,alpha=0.3,legend=True,save=None):
+    def dist(self,col,truth=None,cl=25,bandwidth=0.02,ax=None,alpha=0.3,legend=True,save=None):
         fisna = self.disna[col]
         preds = self.data_frame.loc[fisna,col].values
         if truth is None:
@@ -500,7 +601,9 @@ class Imputer:
         
         return (m1,l1,u1),(m2,l2,u2)
 
-    def dist_all(self,truth=None,cl=25,bandwidth=None,save=None):
+    def dist_all(self,truth=None,cl=25,bandwidth=0.02,save=None):
+#        ny = int(np.sqrt(self.ncol))
+#        nx = (self.ncol//ny)+1
         
         nn = self.ncol
         ny = int(np.sqrt(nn))
@@ -556,7 +659,7 @@ class Imputer:
 #            lsses.append(self.metric_opt(metr_dict[key],truth))
             lsses.append(metric_opt(self,metr_dict[key],truth))
         lsses = np.array(lsses)
-        df = pd.DataFrame(data=lsses.T,index=self.cols,columns=metr_dict.keys())
+        df = pd.DataFrame(data=lsses.T,columns=metr_dict.keys())
         df = df.apply(pd.to_numeric, errors='ignore')
         return df
         
@@ -582,142 +685,183 @@ class Imputer:
         else:
             self.models[col] = self.model_class()
 
-try:
-    import cudf
-    import cupy as cp
-    import tensorflow as tf
+import cudf
+import cupy as cp
+import tensorflow as tf
+# import cuml
+class GImputer(Imputer):
+    def __init__(self,data_frame,model,loss_f=None,fill_method='random',save_history=False):
+        print(tf.test.is_built_with_cuda())
+        print(tf.config.list_physical_devices())
+        
+        self.data_frame = data_frame
+        self.disna = self.data_frame.isna()
+        self.disna = cudf.from_pandas(self.disna)
+        self.data_frame = cudf.from_pandas(self.data_frame)
+        
+        if type(model) is str:
+            self.model_class = get_model(model,gpu=True)
+        elif type(model) is dict:
+            self.model_class = {col:get_model(m,gpu=True)() for col,m in model.items()}
+#             if model=='LR':
+#                 from cuml.linear_model import LinearRegression
+#                 self.model_class = LinearRegression
+#             elif model=='SVR':
+#                 from cuml.svm import SVR
+#                 self.model_class = SVR
+#             elif model=='SGD':
+#                 from cuml.linear_model import MBSGDRegressor
+#                 self.model_class = MBSGDRegressor
+#             elif model=='Ridge':
+#                 from cuml.linear_model import Ridge
+#                 self.model_class = Ridge
+#             elif model=='Lasso':
+#                 from cuml.linear_model import Lasso
+#                 self.model_class = Lasso          
+#             elif model=='ElasticNet':
+#                 from cuml.linear_model import ElasticNet
+#                 self.model_class = ElasticNet
+#             elif model=='KNN':
+#                 from cuml.neighbors import KNeighborsRegressor
+#                 self.model_class = KNeighborsRegressor
+#             elif model=='RF':
+#                 from cuml.ensemble import RandomForestRegressor
+#                 self.model_class = RandomForestRegressor
+#             elif model=='XGB':
+#                 from xgboost import XGBRegressor
+#                 self.model_class = XGBRegressor             
+#             else:
+#                 models_dict = {'LR':'Linear Regression',
+#                                'SVR':'Support Vector Resreggor',
+#                                'SGD':' Stochastic Gradient Descent Regressor',
+#                                'Ridge':'Ridge Regressor',
+#                                'Lasso':'Lasso Regressor',
+#                                'ElasticNet':'ElasticNet Regressor',
+#                                'KNN':'KNeighbors Regressor',
+#                                'RF':'Random Forest Regressor',
+#                                'XGB':'XGBoost Regressor' 
+#                               }
+#                 print('implimented models are:')
+#                 for k,v in models_dict.items():
+#                     print(55*'-')
+#                     print('| {:10s} | {:40s}|'.format(k,v))
+#                 print(55*'-')
+            
+#                 assert 0,'The model is not recognized!'
+        else:
+            self.model_class = model
+            pass #TODO check the needed methods
+        
+        self.cols = data_frame.columns
+        self.ncol = len(self.cols)
+        self.save_history = save_history
+        self.history = 0
+        if self.save_history:
+            self.history = {i:[] for i in self.cols}
+        
+        if fill_method=='random':
+            self.data_frame = fill_random(self.data_frame)
+        elif fill_method=='mean':
+            self.data_frame = self.data_frame.fillna(dd.mean())
+        else:
+            assert 0,'fill_mothod is not recognized!'
+        
+        if loss_f is None:
+            from cuml.metrics import mean_squared_error
+            self.loss_f = mean_squared_error
+            
+        self.loss_frame = cudf.DataFrame(columns=self.cols)
+        if type(self.model_class) is dict:
+            self.models = self.model_class
+        else:
+            self.models = {col:None for col in self.cols}
 
-    class GImputer(Imputer):
-        def __init__(self,data_frame,model,loss_f=None,fill_method='random',save_history=False):
-            assert tf.test.is_built_with_cuda(),'No installed GPU is found!'
-            print('Available physical devices are: ',tf.config.list_physical_devices())
+    def impute(self,n_it,inds=None,trsh=-np.inf,**kargs):
+        if inds is None:
+            inds = np.arange(self.ncol)
+            np.random.shuffle(inds)
+    
+        self.to_gpu()
+        
+        ilf = self.loss_frame.shape[0]
+        
+        pbar = tqdm(total=n_it*len(inds))
+        
+        for i in range(n_it):
+            clses = []
+            for j in range(len(inds)):
+                pbar.update(1)
 
-            self.data_frame = data_frame
-            self.data_frame = self.data_frame.apply(lambda x: x.astype(np.float32))
-            self.disna = self.data_frame.isna()
-            self.disna = cudf.from_pandas(self.disna)
-            self.data_frame = cudf.from_pandas(self.data_frame)
+                col = self.cols[inds[j]]
+                fisna = self.disna[col]
+                if fisna.mean()==0:
+#                     self.loss_frame.loc[ilf+i,col] = 0
+                    newrow = cudf.DataFrame(index=[ilf+i],columns=[col],data=[0])
+                    self.loss_frame = self.loss_frame.append(newrow)
+                    
+                    continue
 
-            if type(model) is str:
-                self.model_class = get_model(model,gpu=True)
-            elif type(model) is dict:
-                self.model_class = {col:get_model(m,gpu=True)() for col,m in model.items()}
-            else:
-                self.model_class = model
-                pass #TODO check the needed methods
-
-            self.cols = data_frame.columns
-            self.ncol = len(self.cols)
-            self.save_history = save_history
-            self.history = 0
-            if self.save_history:
-                self.history = {i:[] for i in self.cols}
-
-            if fill_method=='random':
-                self.data_frame = fill_random(self.data_frame)
-            elif fill_method=='mean':
-                self.data_frame = self.data_frame.fillna(dd.mean())
-            else:
-                assert 0,'fill_mothod is not recognized!'
-
-            if loss_f is None:
-                from cuml.metrics import mean_squared_error
-                self.loss_f = mean_squared_error
-
-            self.loss_frame = cudf.DataFrame(columns=self.cols)
-            if type(self.model_class) is dict:
-                self.models = self.model_class
-            else:
-                self.models = {col:None for col in self.cols}
-
-        def impute(self,n_it,inds=None,trsh=-np.inf,**kargs):
-            if inds is None:
-                inds = np.arange(self.ncol)
-                np.random.shuffle(inds)
-
-            self.to_gpu()
-
-            ilf = self.loss_frame.shape[0]
-
-            pbar = tqdm(total=n_it*len(inds))
-
-            for i in range(n_it):
-                clses = []
-                for j in range(len(inds)):
-                    pbar.update(1)
-
-                    col = self.cols[inds[j]]
-                    fisna = self.disna[col]
-                    if fisna.mean()==0:
-    #                     self.loss_frame.loc[ilf+i,col] = 0
-                        newrow = cudf.DataFrame(index=[ilf+i],columns=[col],data=[0])
+                if i>2:
+                    c_loss = self.loss_frame.iloc[-1][col]
+                    if c_loss<trsh:
+#                         self.loss_frame.loc[ilf+i,col] = c_loss
+                        newrow = cudf.DataFrame(index=[ilf+i],columns=[col],data=[c_loss])
                         self.loss_frame = self.loss_frame.append(newrow)
-
                         continue
 
-                    if i>2:
-                        c_loss = self.loss_frame.iloc[-1][col]
-                        if c_loss<trsh:
-    #                         self.loss_frame.loc[ilf+i,col] = c_loss
-                            newrow = cudf.DataFrame(index=[ilf+i],columns=[col],data=[c_loss])
-                            self.loss_frame = self.loss_frame.append(newrow)
-                            continue
+                x = self.data_frame.drop(columns=[col])
+                y = self.data_frame[col]
 
-                    x = self.data_frame.drop(columns=[col])
-                    y = self.data_frame[col]
+                x_train = x[~fisna]
+                y_train = y[~fisna]
+                x_test = x[fisna]
+                y_test = y[fisna]
 
-                    x_train = x[~fisna]
-                    y_train = y[~fisna]
-                    x_test = x[fisna]
-                    y_test = y[fisna]
+                if self.models[col] is None:
+                    model = self.model_class()
+                    self.models[col] = model
+                else:
+                    model = self.models[col]
 
-                    if self.models[col] is None:
-                        model = self.model_class()
-                        self.models[col] = model
-                    else:
-                        model = self.models[col]
+                model.fit(x_train,y_train,**kargs)
+                pred = model.predict(x_test)
+                if pred.ndim>1:
+                    pred = pred[:,0]
 
-                    model.fit(x_train,y_train,**kargs)
-                    pred = model.predict(x_test)
-                    if pred.ndim>1:
-                        pred = pred[:,0]
+                c_loss = self.loss_f(y_test,pred)
+                clses.append(c_loss)
+                if type(pred) is cudf.Series:
+                    pred = pred.to_array()
+                self.data_frame.loc[fisna,col] = pred
+                nn = self.data_frame[col].isna().sum()
+                assert nn==0,'{}   {}   {}   {}'.format(col,fisna.sum(),pred.shape,nn)
+                
+                if self.save_history:
+                    self.history[col].append(pred)
+                    
+#             self.loss_frame.loc[ilf+i,col] = self.loss_f(y_test,pred)
+            clses = cp.stack(clses)
+            clses = clses.reshape(1,-1)
+            newrow = cudf.DataFrame(index=[ilf+i],columns=self.cols[inds],data=clses)
+            self.loss_frame = self.loss_frame.append(newrow)
+        pbar.close()
+        self.to_cpu()
 
-                    c_loss = self.loss_f(y_test,pred)
-                    clses.append(c_loss)
-                    if type(pred) is cudf.Series:
-                        pred = pred.to_array()
-                    self.data_frame.loc[fisna,col] = pred
-                    nn = self.data_frame[col].isna().sum()
-                    assert nn==0,'{}   {}   {}   {}'.format(col,fisna.sum(),pred.shape,nn)
+    def to_cpu(self):
+        if type(self.loss_frame) is cudf.DataFrame:
+            self.loss_frame = self.loss_frame.to_pandas()
+        if type(self.data_frame) is cudf.DataFrame:
+            self.data_frame = self.data_frame.to_pandas()
+        if type(self.disna) is cudf.DataFrame:
+            self.disna = self.disna.to_pandas()
 
-                    if self.save_history:
-                        self.history[col].append(pred)
-
-    #             self.loss_frame.loc[ilf+i,col] = self.loss_f(y_test,pred)
-                clses = cp.stack(clses)
-                clses = clses.reshape(1,-1)
-                newrow = cudf.DataFrame(index=[ilf+i],columns=self.cols[inds],data=clses)
-                self.loss_frame = self.loss_frame.append(newrow)
-            pbar.close()
-            self.to_cpu()
-
-        def to_cpu(self):
-            if type(self.loss_frame) is cudf.DataFrame:
-                self.loss_frame = self.loss_frame.to_pandas()
-            if type(self.data_frame) is cudf.DataFrame:
-                self.data_frame = self.data_frame.to_pandas()
-            if type(self.disna) is cudf.DataFrame:
-                self.disna = self.disna.to_pandas()
-
-        def to_gpu(self):
-            if type(self.loss_frame) is pd.DataFrame:
-                self.loss_frame = cudf.from_pandas(self.loss_frame)
-            if type(self.data_frame) is pd.DataFrame:
-                self.data_frame = cudf.from_pandas(self.data_frame)
-            if type(self.disna) is pd.DataFrame:
-                self.disna = cudf.from_pandas(self.disna)     
-except:
-    print('GPU functionality is not available!')
+    def to_gpu(self):
+        if type(self.loss_frame) is pd.DataFrame:
+            self.loss_frame = cudf.from_pandas(self.loss_frame)
+        if type(self.data_frame) is pd.DataFrame:
+            self.data_frame = cudf.from_pandas(self.data_frame)
+        if type(self.disna) is pd.DataFrame:
+            self.disna = cudf.from_pandas(self.disna)        
 
 def metric_opt(self,metric_f,truth):
     lsses = []
@@ -734,17 +878,14 @@ def mykde(x,
           color = 'b',
           alpha = 0.3,
           kernel = 'gaussian',
-          bandwidth = None,
+          bandwidth = 0.2,
           ax = None):
 
     if ax is None:
         fig, ax = plt.subplots(1,1,figsize=(8,5))
     x = x.reshape(-1, 1)
-    xmin,xmax = x.min(),x.max()
-    xx = np.linspace(xmin,xmax, 100)[:, None]
-    if bandwidth is None:
-        bandwidth = 0.02*(xmax-xmin)
-    
+    xx = np.linspace(x.min(),x.max(), 100)[:, None]
+
     # kdep = sns.kdeplot(gd, color='b',n_levels=[0.2,0.8], shade=True, ax=ax)
     kde = KernelDensity(kernel=kernel, bandwidth=bandwidth).fit(x)
     kdep = kde.score_samples(xx)
@@ -775,6 +916,27 @@ def mape_pranged(tr_,im_,p1,p2):
     filt = (p1<tr_) & (tr_<p2)
     return mape(tr_[filt],im_[filt])
 
+#def make_keras_picklable():
+#    def __getstate__(self):
+#        model_str = ""
+#        with tempfile.NamedTemporaryFile(suffix='.hdf5', delete=True) as fd:
+#            save_model(self, fd.name, overwrite=True)
+#            model_str = fd.read()
+#        d = {'model_str': model_str}
+#        return d
+
+#    def __setstate__(self, state):
+#        with tempfile.NamedTemporaryFile(suffix='.hdf5', delete=True) as fd:
+#            fd.write(state['model_str'])
+#            fd.flush()
+#            model = load_model(fd.name)
+#        self.__dict__ = model.__dict__
+
+
+#    cls = Model
+#    cls.__getstate__ = __getstate__
+#    cls.__setstate__ = __setstate__
+
 def unpack(model, training_config, weights):
     restored_model = deserialize(model)
     if training_config is not None:
@@ -786,7 +948,38 @@ def unpack(model, training_config, weights):
     restored_model.set_weights(weights)
     return restored_model
 
+# Hotfix function
+def make_keras_picklable():
 
+    def __reduce__(self):
+        model_metadata = saving_utils.model_metadata(self)
+        training_config = model_metadata.get("training_config", None)
+        model = serialize(self)
+        weights = self.get_weights()
+        return (unpack, (model, training_config, weights))
+
+    cls = Model
+    cls.__reduce__ = __reduce__
+
+
+def dense_model(inp,out,nlayer,batchnorm=False,dropout=False,loss='mean_squared_error',optimizer='adam',kernel_initializer='normal'):
+    dims = np.linspace(inp,out,nlayer).astype(int)[1:-1]
+    input_img = keras.Input(shape=inp)
+    x = input_img
+    for dim in dims:
+        x = layers.Dense(dim, kernel_initializer=kernel_initializer, activation='relu')(x)
+        if batchnorm:
+            x = layers.BatchNormalization()(x)
+        if dropout!=0:
+            x = layers.Dropout(dropout)(x)
+    # create model
+    if dropout!=0:
+        x = layers.Dropout(dropout)(x)
+    x = layers.Dense(out, kernel_initializer='normal')(x)
+    
+    model = keras.Model(input_img, x)
+    model.compile(loss=loss, optimizer=optimizer)
+    return model
 
 
 def in_notebook():
@@ -805,6 +998,4 @@ def save(fname,data):
 def load(fname):
     with open(fname, 'rb') as handle:
         return pickle.load(handle)
-
-
 
