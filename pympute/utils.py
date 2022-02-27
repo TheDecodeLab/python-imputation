@@ -8,7 +8,6 @@ import tempfile
 import pandas as pd
 import sklearn as sk
 from tqdm import tqdm
-from pathlib import Path
 from copy import deepcopy
 from scipy.stats import ttest_ind
 from sklearn.metrics import r2_score
@@ -30,13 +29,26 @@ def data_load(prefix='data/',i=0,part = '1st'):
     return frame
 
 def get_range(xx):
-    xmin = np.nanmin(xx,axis=0,keepdims=1)
-    xmax = np.nanmax(xx,axis=0,keepdims=1)
+    xmin = xx.min()#np.nanmin(xx,axis=0,keepdims=1)
+    xmax = xx.max()#np.nanmax(xx,axis=0,keepdims=1)
     return xmin,xmax
     
-def set_range(xx,xmin=0,xmax=1):
-    xx = (xx-xmin)/(xmax-xmin)
-    return xx
+def set_range(df,xmin=0,xmax=1,excepts=[]):
+#     xx = (xx-xmin)/(xmax-xmin)
+    for col in df.columns:
+        if col in excepts: continue
+        if df[col].std()==0: continue
+        df[col] = (df[col]-xmin[col])/(xmax[col]-xmin[col])
+    return df
+
+def reset_range(df,xmin=0,xmax=1,excepts=[]):
+#     xx = (xx-xmin)/(xmax-xmin)
+    for col in df.columns:
+        if col in excepts: continue
+        if df[col].std()==0: continue
+        dr = xmax[col]-xmin[col]
+        df[col] = df[col]*dr+xmin[col]
+    return df
 
 def get_mean_std(xx):
     xmean = np.nanmean(xx,axis=0,keepdims=1)
@@ -54,22 +66,26 @@ def set_mean_std(xx,xmean=0,xstd=1):
 #     xx = xx*(normax-normin)+normin
 #     return xx
 
-def fill_random(df):
+def fill_random(df,batch_input):
     dd = deepcopy(df)
     cols = dd.columns
     for col in cols:
         fmiss = dd[col].isna().values
         nmiss = np.sum(fmiss)
+        if batch_input and nmiss==0:
+            continue
         smiss = dd[col].dropna().sample(nmiss,replace=1).values
         dd.loc[fmiss,col] = smiss
     return dd
 
-def gfill_random(df):
+def gfill_random(df,batch_input):
     dd = deepcopy(df)
     cols = dd.columns
     for col in cols:
         fmiss = dd[col].isna().values
         nmiss = cp.sum(fmiss)
+        if batch_input and nmiss==0:
+            continue
         smiss = dd[col].dropna().sample(nmiss,replace=1).values
         dd.loc[fmiss,col] = smiss
     return dd
@@ -311,7 +327,7 @@ def gpu_classifiers_list():
            }
 
 class Imputer:
-    def __init__(self,data_frame,model,loss_f=None,fill_method='random',save_history=False):
+    def __init__(self,data_frame,model,loss_f=None,fill_method='random',save_history=False,batch_input=False):
         self.data_frame = data_frame
         self.disna = data_frame.isna()
         
@@ -325,15 +341,22 @@ class Imputer:
         
         self.cols = data_frame.columns
         self.ncol = len(self.cols)
+        if type(model) is dict:
+            self.imp_cols = list(model.keys())
+        else:
+            self.imp_cols = self.data_frame.columns[self.data_frame.isnull().any()]
+#            self.imp_cols = self.cols
+        self.imp_ncol = len(self.imp_cols)
         self.save_history = save_history
+        self.batch_input = batch_input
         self.history = 0
         if self.save_history:
             self.history = {i:[] for i in self.cols}
         
         if fill_method=='random':
-            self.data_frame = fill_random(self.data_frame)
+            self.data_frame[self.imp_cols] = fill_random(self.data_frame[self.imp_cols],self.batch_input)
         elif fill_method=='mean':
-            self.data_frame = self.data_frame.fillna(dd.mean())
+            self.data_frame[self.imp_cols] = self.data_frame[self.imp_cols].fillna(dd.mean())
         else:
             assert 0,'fill_mothod is not recognized!'
         
@@ -341,11 +364,11 @@ class Imputer:
             from sklearn.metrics import mean_squared_error
             self.loss_f = mean_squared_error
 
-        self.loss_frame = pd.DataFrame(columns=self.cols)
+        self.loss_frame = pd.DataFrame(columns=self.imp_cols)
         if type(self.model_class) is dict:
             self.models = self.model_class
         else:
-            self.models = {col:None for col in self.cols}
+            self.models = {col:None for col in self.imp_cols}
 
     def manual_model_init(self,**kargs):
         if self.models[col] is None:
@@ -354,7 +377,7 @@ class Imputer:
 
     def impute(self,n_it,inds=None,trsh=-np.inf,**kargs):
         if inds is None:
-            inds = np.arange(self.ncol)
+            inds = np.arange(self.imp_ncol)
             np.random.shuffle(inds)
     
         ilf = self.loss_frame.shape[0]
@@ -365,7 +388,7 @@ class Imputer:
             for j in range(len(inds)):
                 pbar.update(1)
 
-                col = self.cols[inds[j]]
+                col = self.imp_cols[inds[j]]
                 fisna = self.disna[col]
                 if fisna.mean()==0:
                     self.loss_frame.loc[ilf+i,col] = 0
@@ -384,6 +407,10 @@ class Imputer:
                 y_train = y[~fisna]
                 x_test = x[fisna]
                 y_test = y[fisna]
+                if self.batch_input and len(y_test)==0:
+                    clses.append(0)
+                    continue
+                if len(y_test)==0: continue
 
                 if self.models[col] is None:
                     model = self.model_class()
@@ -421,7 +448,7 @@ class Imputer:
             fig,ax = plt.subplots(1,1,figsize=(30,10))
         lsses = []
         lsses_r = []
-        for col in self.cols:
+        for col in self.imp_cols:
             fisna = self.disna[col]
             preds = self.data_frame.loc[fisna,col]
             nmiss = np.sum(fisna.values)
@@ -435,7 +462,7 @@ class Imputer:
                 lssr = com_f(trth,smiss)
             lsses.append(lss)
             lsses_r.append(lssr)
-        x = np.arange(self.ncol)  # the label locations
+        x = np.arange(self.imp_ncol)  # the label locations
         if with_random:
             ax.bar(x-width/2,lsses, width,color='b',label='imputed')
             ax.bar(x+width/2,lsses_r, width,color='r',label='radnom')
@@ -445,9 +472,9 @@ class Imputer:
         
         # Add some text for labels, title and custom x-axis tick labels, etc.
         ax.set_ylabel('comparison function', fontsize=20)
-        ax.set_xticks(np.arange(self.ncol))
-        ax.set_xticklabels(self.cols,rotation=90)
-        ax.set_xlim(-1,self.ncol)
+        ax.set_xticks(np.arange(self.imp_ncol))
+        ax.set_xticklabels(self.imp_cols,rotation=90)
+        ax.set_xlim(-1,self.imp_ncol)
         # ax.set_yscale('log')
         ax.tick_params(axis='both', which='major', labelsize=20)
         ax.tick_params(axis='both', which='minor', labelsize=15)
@@ -461,7 +488,6 @@ class Imputer:
 
 
     def save(self,fname):
-        Path(fname).mkdir(parents=True, exist_ok=True)
         self.loss_frame.to_csv(fname+'loss_frame.csv',index=0)
         save(fname+'model.pkl',self.models)
         if self.history:
@@ -502,7 +528,7 @@ class Imputer:
 
     def dist_all(self,truth=None,cl=25,bandwidth=None,save=None):
         
-        nn = self.ncol
+        nn = self.imp_ncol
         ny = int(np.sqrt(nn))
         nx = (nn//ny)
         if nn/ny!=nn//ny:
@@ -513,10 +539,10 @@ class Imputer:
         for column in range(nx):
             for row in range(ny):
                 ax = axs[row,column]
-                if ii==self.ncol: 
+                if ii==self.imp_ncol: 
                     ax.axis("off")
                     continue
-                col = self.cols[ii]
+                col = self.imp_cols[ii]
                 self.dist(col,truth,cl=cl,bandwidth=bandwidth,ax=ax,legend=0)
                 ax.set_title(col)
                 ii = ii+1
@@ -526,7 +552,7 @@ class Imputer:
 
     def metric_opt(self,metric_f,truth):
         lsses = []
-        for col in self.cols:
+        for col in self.imp_cols:
             fisna = self.disna[col]
             preds = self.data_frame.loc[fisna,col]
             trth = truth.loc[fisna,col]
@@ -556,14 +582,14 @@ class Imputer:
 #            lsses.append(self.metric_opt(metr_dict[key],truth))
             lsses.append(metric_opt(self,metr_dict[key],truth))
         lsses = np.array(lsses)
-        df = pd.DataFrame(data=lsses.T,index=self.cols,columns=metr_dict.keys())
+        df = pd.DataFrame(data=lsses.T,columns=metr_dict.keys())
         df = df.apply(pd.to_numeric, errors='ignore')
         return df
         
     def metric_opt(self,metric_f,truth):
         lsses = pd.DataFrame(columns=['feature','value'])
         ii = 0
-        for col in self.cols:
+        for col in self.imp_cols:
             fisna = self.disna[col]
             preds = self.data_frame.loc[fisna,col].values
             trth = truth.loc[fisna,col].values
@@ -578,7 +604,7 @@ class Imputer:
 
     def model_reset(self,col=None):
         if col is None:
-            for col in self.cols: self.models[col] = self.model_class()
+            for col in self.imp_cols: self.models[col] = self.model_class()
         else:
             self.models[col] = self.model_class()
 
@@ -588,7 +614,7 @@ try:
     import tensorflow as tf
 
     class GImputer(Imputer):
-        def __init__(self,data_frame,model,loss_f=None,fill_method='random',save_history=False):
+        def __init__(self,data_frame,model,loss_f=None,fill_method='random',save_history=False,batch_input=False):
             assert tf.test.is_built_with_cuda(),'No installed GPU is found!'
             print('Available physical devices are: ',tf.config.list_physical_devices())
 
@@ -606,17 +632,24 @@ try:
                 self.model_class = model
                 pass #TODO check the needed methods
 
-            self.cols = data_frame.columns
+            self.cols = list(data_frame.columns)
             self.ncol = len(self.cols)
+            if type(model) is dict:
+                self.imp_cols = list(model.keys())
+            else:
+                self.imp_cols = data_frame.columns[data_frame.isnull().any()]
+#                self.imp_cols = self.cols
+            self.imp_ncol = len(self.imp_cols)
             self.save_history = save_history
+            self.batch_input = batch_input
             self.history = 0
             if self.save_history:
-                self.history = {i:[] for i in self.cols}
+                self.history = {i:[] for i in self.imp_cols}
 
             if fill_method=='random':
-                self.data_frame = fill_random(self.data_frame)
+                self.data_frame[self.imp_cols] = gfill_random(self.data_frame[self.imp_cols],self.batch_input)
             elif fill_method=='mean':
-                self.data_frame = self.data_frame.fillna(dd.mean())
+                self.data_frame[self.imp_cols] = self.data_frame[self.imp_cols].fillna(dd.mean())
             else:
                 assert 0,'fill_mothod is not recognized!'
 
@@ -624,15 +657,15 @@ try:
                 from cuml.metrics import mean_squared_error
                 self.loss_f = mean_squared_error
 
-            self.loss_frame = cudf.DataFrame(columns=self.cols)
+            self.loss_frame = cudf.DataFrame(columns=self.imp_cols)
             if type(self.model_class) is dict:
                 self.models = self.model_class
             else:
-                self.models = {col:None for col in self.cols}
+                self.models = {col:None for col in self.imp_cols}
 
         def impute(self,n_it,inds=None,trsh=-np.inf,**kargs):
             if inds is None:
-                inds = np.arange(self.ncol)
+                inds = np.arange(self.imp_ncol)
                 np.random.shuffle(inds)
 
             self.to_gpu()
@@ -646,7 +679,7 @@ try:
                 for j in range(len(inds)):
                     pbar.update(1)
 
-                    col = self.cols[inds[j]]
+                    col = self.imp_cols[inds[j]]
                     fisna = self.disna[col]
                     if fisna.mean()==0:
     #                     self.loss_frame.loc[ilf+i,col] = 0
@@ -670,7 +703,11 @@ try:
                     y_train = y[~fisna]
                     x_test = x[fisna]
                     y_test = y[fisna]
-
+                    if self.batch_input and len(y_test)==0:
+                        clses.append(0)
+                        continue
+                    if len(y_test)==0: continue
+                        
                     if self.models[col] is None:
                         model = self.model_class()
                         self.models[col] = model
@@ -696,7 +733,7 @@ try:
     #             self.loss_frame.loc[ilf+i,col] = self.loss_f(y_test,pred)
                 clses = cp.stack(clses)
                 clses = clses.reshape(1,-1)
-                newrow = cudf.DataFrame(index=[ilf+i],columns=self.cols[inds],data=clses)
+                newrow = cudf.DataFrame(index=[ilf+i],columns=self.imp_cols,data=clses) #self.cols[inds]
                 self.loss_frame = self.loss_frame.append(newrow)
             pbar.close()
             self.to_cpu()
@@ -786,8 +823,35 @@ def unpack(model, training_config, weights):
     restored_model.set_weights(weights)
     return restored_model
 
+def do_holdout(df0,n_hold):
+    df = df0+0
+    cols = df.columns[df.isnull().any()]
+    hold_outs = {}
+    for col in cols:
+        filt = ~df[col].isna()
+        samples = filt[filt].sample(n_hold)
+        inds = list(samples.index)
+        hold_outs[col] = df.loc[inds,col]
+        df.loc[inds,col] = np.nan
+    return df,hold_outs
 
+def compare_holdout(df,hold_outs,loss_func):
+    cols = list(hold_outs.keys())
+    error = {}
+    for col in cols:
+        inds = hold_outs[col].index
+        vals1 = hold_outs[col].values
+        vals2 = df.loc[inds,col].values
+        error[col] = loss_func(vals1,vals2)
+    return error
 
+def undo_holdout(df,hold_outs):
+    cols = list(hold_outs.keys())
+    for col in cols:
+        inds = hold_outs[col].index
+        vals = hold_outs[col].values
+        df.loc[inds,col] = vals
+    return df
 
 def in_notebook():
     try:
