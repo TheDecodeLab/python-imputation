@@ -359,6 +359,8 @@ class Imputer:
             self.data_frame[self.imp_cols] = self.data_frame[self.imp_cols].fillna(dd.mean())
         else:
             assert 0,'fill_mothod is not recognized!'
+            
+        assert self.data_frame.isna().mean().mean()==0, 'Something went wrong! Data frame containes missing values after filling requested columns!'
         
         if loss_f is None:
             from sklearn.metrics import mean_squared_error
@@ -653,6 +655,7 @@ try:
             else:
                 assert 0,'fill_mothod is not recognized!'
 
+            assert self.data_frame.isna().mean().mean()==0, 'Something went wrong! Data frame containes missing values after filling requested columns!'
             if loss_f is None:
                 from cuml.metrics import mean_squared_error
                 self.loss_f = mean_squared_error
@@ -840,8 +843,18 @@ def compare_holdout(df,hold_outs,loss_func):
     error = {}
     for col in cols:
         inds = hold_outs[col].index
-        vals1 = hold_outs[col].values
-        vals2 = df.loc[inds,col].values
+        vals1 = df.loc[inds,col].values
+        vals2 = hold_outs[col].values
+        error[col] = loss_func(vals1,vals2)
+    return error
+
+def compare_using_holdout(df1,df2,hold_outs,loss_func):
+    cols = list(hold_outs.keys())
+    error = {}
+    for col in cols:
+        inds = hold_outs[col].index
+        vals1 = df1.loc[inds,col].values #hold_outs[col].values
+        vals2 = df2.loc[inds,col].values
         error[col] = loss_func(vals1,vals2)
     return error
 
