@@ -57,7 +57,7 @@ If you use Pympute in your research, please cite our work:
 ```bibtex
 @article{pympute,
     title={Pympute: A Python Package for Data Imputation},
-    author={Vafaei Sadr, Alireza},
+    author={Alireza Vafaei Sadr, Jiang Li, Wenke Hwang, Mohammed Yeasin, Ming Wang, Harold Lehmann, Ramin Zand, Vida Abedi},
     journal={},
     year={},
     publisher={}
