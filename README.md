@@ -42,8 +42,8 @@ For a quick start with the GUI interface, you can use Google Colab:
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TheDecodeLab/python-imputation/blob/master/notebooks/pympute.ipynb)
 
-**Recommended:** To run on Google Colab and use teh GUI you can use the following link:
-- [Ahunt_app.ipynb](https://github.com/TheDecodeLab/python-imputation/blob/master/notebooks/pympute.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TheDecodeLab/python-imputation/blob/master/notebooks/pympute.ipynb)
+<!-- **Recommended:** To run on Google Colab and use teh GUI you can use the following link:
+- [Ahunt_app.ipynb](https://github.com/TheDecodeLab/python-imputation/blob/master/notebooks/pympute.ipynb) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TheDecodeLab/python-imputation/blob/master/notebooks/pympute.ipynb) -->
 
 
 ## Usage
