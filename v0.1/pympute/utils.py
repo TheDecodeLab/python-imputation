@@ -3,7 +3,7 @@ import os
 import numpy as np
 import pylab as plt
 import pickle
-#import pyreadr
+import pyreadr
 import tempfile
 import pandas as pd
 import sklearn as sk
@@ -15,18 +15,18 @@ from sklearn.metrics import r2_score
 import matplotlib.patches as mpatches
 from sklearn.neighbors import KernelDensity
 
-#def data_load(prefix='data/',i=0,part = '1st'):
-#    frame = {'data':[],'masked':[]}
-#    template = 'dffinal_repeat_select_widformat_t{}_{}{}.RData'
-#    for typ in ['','masked_']:
-#        fname = template.format(i,typ,part)
-#        result = pyreadr.read_r(prefix+fname)
-#        key = list(result.keys())[0]
-#        if typ=='':
-#            frame['data'] = result[key]
-#        else:
-#            frame['masked'] = result[key]
-#    return frame
+def data_load(prefix='data/',i=0,part = '1st'):
+    frame = {'data':[],'masked':[]}
+    template = 'dffinal_repeat_select_widformat_t{}_{}{}.RData'
+    for typ in ['','masked_']:
+        fname = template.format(i,typ,part)
+        result = pyreadr.read_r(prefix+fname)
+        key = list(result.keys())[0]
+        if typ=='':
+            frame['data'] = result[key]
+        else:
+            frame['masked'] = result[key]
+    return frame
 
 def get_range(xx):
     xmin = xx.min()#np.nanmin(xx,axis=0,keepdims=1)
@@ -66,7 +66,7 @@ def set_mean_std(xx,xmean=0,xstd=1):
 #     xx = xx*(normax-normin)+normin
 #     return xx
 
-def fill_random(df,batch_input=False):
+def fill_random(df,batch_input):
     dd = deepcopy(df)
     cols = dd.columns
     for col in cols:
@@ -78,15 +78,14 @@ def fill_random(df,batch_input=False):
         dd.loc[fmiss,col] = smiss
     return dd
 
-def gfill_random(df,batch_input=False):
+def gfill_random(df,batch_input):
     dd = deepcopy(df)
     cols = dd.columns
     for col in cols:
         fmiss = dd[col].isna().values
-        nmiss = int(df[col].isna().sum()) # cp.sum(fmiss)
+        nmiss = cp.sum(fmiss)
         if batch_input and nmiss==0:
             continue
-        # print(col,nmiss)
         smiss = dd[col].dropna().sample(nmiss,replace=1).values
         dd.loc[fmiss,col] = smiss
     return dd
@@ -201,7 +200,7 @@ def get_model(model,gpu=False):
                 print('| {:12s} | {:50s}|'.format(k,v))
             print(68*'=')
 
-            assert 0, f'The model {model} is not recognized!'
+            assert 0,'The model is not recognized!'
     else:
         if model=='LR-r':
             from cuml.linear_model import LinearRegression
@@ -266,7 +265,7 @@ def get_model(model,gpu=False):
                 print('| {:12s} | {:50s}|'.format(k,v))
             print(68*'=')
 
-            assert 0, f'The model {model} is not recognized!'
+            assert 0,'The model is not recognized!'
     return model_class
 
 def cpu_regressors_list():
@@ -328,11 +327,9 @@ def gpu_classifiers_list():
            }
 
 class Imputer:
-    def __init__(self,data_frame,model,loss_f=None,fill_method='random',save_history=False,batch_input=False,st=None):
-        self.data_frame0 = data_frame.copy(deep=True)
+    def __init__(self,data_frame,model,loss_f=None,fill_method='random',save_history=False,batch_input=False):
         self.data_frame = data_frame
         self.disna = data_frame.isna()
-        self.device = 'cpu'
         
         if type(model) is str:
             self.model_class = get_model(model,gpu=False)
@@ -353,7 +350,6 @@ class Imputer:
         self.save_history = save_history
         self.batch_input = batch_input
         self.history = 0
-        self.st = st
         if self.save_history:
             self.history = {i:[] for i in self.cols}
         
@@ -381,38 +377,18 @@ class Imputer:
             model = self.model_class(**kargs)
             self.models[col] = model
 
-    def explore(self,n_try=5,model_list=None):
-        df = self.data_frame0.copy(deep=True)
-        self.models,self.dfcomp = explore(df,device=self.device,n_try=n_try,model_list=model_list,st=self.st)
-        return self.models
-
-    def impute(self,n_it,inds=None,normalize=True,trsh=-np.inf,**kargs):
+    def impute(self,n_it,inds=None,trsh=-np.inf,**kargs):
         if inds is None:
             inds = np.arange(self.imp_ncol)
             np.random.shuffle(inds)
     
         ilf = self.loss_frame.shape[0]
         
-        if normalize:
-            normin,normax = get_range(self.data_frame)
-            self.data_frame = set_range(self.data_frame,normin,normax)            
-        
-        nprog = n_it*len(inds)
-        pbar = tqdm(total=nprog, position=0, leave=True)
-        if self.st:
-            progress_bar = self.st.progress(0)
-            status_text = self.st.empty()
-            iprog = 0
-            progress_bar.progress(iprog)
-            status_text.text(f'Imputation... {iprog:4.2f}% complete.')
+        pbar = tqdm(total=n_it*len(inds), position=0, leave=True)
         
         for i in range(n_it):
             for j in range(len(inds)):
                 pbar.update(1)
-                if self.st:
-                    iprog = iprog+1
-                    progress_bar.progress(iprog/nprog)
-                    status_text.text(f'Imputation... {100*iprog/nprog:4.2f}% complete.')
 
                 col = self.imp_cols[inds[j]]
                 fisna = self.disna[col]
@@ -453,13 +429,7 @@ class Imputer:
                 self.data_frame.loc[fisna,col] = pred
                 if self.save_history:
                     self.history[col].append(pred)
-        
-        if normalize: self.data_frame = reset_range(self.data_frame,normin,normax)
         pbar.close()
-        if self.st:
-            progress_bar.progress(100)
-            progress_bar.empty()
-            status_text.empty()
 
     def plot_loss_frame(self,ax=None):
         if ax is None:
@@ -556,7 +526,7 @@ class Imputer:
         if save is not None:
             plt.savefig(save+'.jpg',dpi=200)
         
-        return fig,ax,(m1,l1,u1),(m2,l2,u2)
+        return (m1,l1,u1),(m2,l2,u2)
 
     def dist_all(self,truth=None,cl=25,bandwidth=None,save=None):
         
@@ -581,8 +551,7 @@ class Imputer:
         plt.tight_layout()
         if save is not None:
             plt.savefig(save+'.jpg',dpi=200)
-        return fig, axs
-        
+
     def metric_opt(self,metric_f,truth):
         lsses = []
         for col in self.imp_cols:
@@ -644,20 +613,18 @@ class Imputer:
 try:
     import cudf
     import cupy as cp
-    # import tensorflow as tf
+    import tensorflow as tf
 
     class GImputer(Imputer):
-        def __init__(self,data_frame,model,loss_f=None,fill_method='random',save_history=False,batch_input=False,st=None):
-            # assert tf.test.is_built_with_cuda(),'No installed GPU is found!'
-            # print('Available physical devices are: ',tf.config.list_physical_devices())
+        def __init__(self,data_frame,model,loss_f=None,fill_method='random',save_history=False,batch_input=False):
+            assert tf.test.is_built_with_cuda(),'No installed GPU is found!'
+            print('Available physical devices are: ',tf.config.list_physical_devices())
 
-            self.data_frame0 = data_frame.copy(deep=True)
             self.data_frame = data_frame
             self.data_frame = self.data_frame.apply(lambda x: x.astype(np.float32))
             self.disna = self.data_frame.isna()
             self.disna = cudf.from_pandas(self.disna)
             self.data_frame = cudf.from_pandas(self.data_frame)
-            self.device = 'gpu'
 
             if type(model) is str:
                 self.model_class = get_model(model,gpu=True)
@@ -678,7 +645,6 @@ try:
             self.save_history = save_history
             self.batch_input = batch_input
             self.history = 0
-            self.st = st
             if self.save_history:
                 self.history = {i:[] for i in self.imp_cols}
 
@@ -709,31 +675,20 @@ try:
 
             ilf = self.loss_frame.shape[0]
 
-            nprog = n_it*len(inds)
-            pbar = tqdm(total=nprog, position=0, leave=True)
-            if self.st:
-                progress_bar = self.st.progress(0)
-                status_text = self.st.empty()
-                iprog = 0
-                progress_bar.progress(iprog)
-                status_text.text(f'Imputation... {iprog:4.2f}% complete.')        
+            pbar = tqdm(total=n_it*len(inds))
 
             for i in range(n_it):
                 clses = []
                 for j in range(len(inds)):
                     pbar.update(1)
-                    if self.st:
-                        iprog = iprog+1
-                        progress_bar.progress(iprog/nprog)
-                        status_text.text(f'Imputation... {100*iprog/nprog:4.2f}% complete.')
 
                     col = self.imp_cols[inds[j]]
                     fisna = self.disna[col]
                     if fisna.mean()==0:
     #                     self.loss_frame.loc[ilf+i,col] = 0
                         newrow = cudf.DataFrame(index=[ilf+i],columns=[col],data=[0])
-                        # self.loss_frame = self.loss_frame.append(newrow)
-                        self.loss_frame = cudf.concat([self.loss_frame, newrow])
+                        self.loss_frame = self.loss_frame.append(newrow)
+
                         continue
 
                     if i>2:
@@ -741,22 +696,16 @@ try:
                         if c_loss<trsh:
     #                         self.loss_frame.loc[ilf+i,col] = c_loss
                             newrow = cudf.DataFrame(index=[ilf+i],columns=[col],data=[c_loss])
-                            # self.loss_frame = self.loss_frame.append(newrow)
-                            self.loss_frame = cudf.concat([self.loss_frame, newrow])
+                            self.loss_frame = self.loss_frame.append(newrow)
                             continue
 
                     x = self.data_frame.drop(columns=[col])
                     y = self.data_frame[col]
 
-                    # TODO: should be removed later.
-                    # assert x.isnull().sum().sum()==0, f'x has null while y={col}!'
-                    # assert y.isnull().sum().sum()==0, f'y={col} has null!'
-
                     x_train = x[~fisna]
                     y_train = y[~fisna]
                     x_test = x[fisna]
                     y_test = y[fisna]
-                    
                     if self.batch_input and len(y_test)==0:
                         clses.append(0)
                         continue
@@ -773,17 +722,10 @@ try:
                     if pred.ndim>1:
                         pred = pred[:,0]
 
-                    nan_filt = np.isnan(pred)
-                    if nan_filt.sum()!=0:
-                        pred[nan_filt] = 0
-                        print(f'Problem with this model! NaN outcomes!')
-                        if self.st:
-                            st.warning(f'Problem with this model! NaN outcomes!', icon="⚠️")
-
                     c_loss = self.loss_f(y_test,pred)
                     clses.append(c_loss)
                     if type(pred) is cudf.Series:
-                        pred = pred.to_numpy()
+                        pred = pred.to_array()
                     self.data_frame.loc[fisna,col] = pred
                     nn = self.data_frame[col].isna().sum()
                     assert nn==0,'{}   {}   {}   {}'.format(col,fisna.sum(),pred.shape,nn)
@@ -795,13 +737,8 @@ try:
                 clses = cp.stack(clses)
                 clses = clses.reshape(1,-1)
                 newrow = cudf.DataFrame(index=[ilf+i],columns=self.imp_cols,data=clses) #self.cols[inds]
-                # self.loss_frame = self.loss_frame.append(newrow)
-                self.loss_frame = cudf.concat([self.loss_frame, newrow])
+                self.loss_frame = self.loss_frame.append(newrow)
             pbar.close()
-            if self.st:
-                progress_bar.progress(100)
-                progress_bar.empty()
-                status_text.empty()
             self.to_cpu()
 
         def to_cpu(self):
@@ -821,113 +758,6 @@ try:
                 self.disna = cudf.from_pandas(self.disna)     
 except:
     print('GPU functionality is not available!')
-
-def error_rate(x1,x2,eps=None):
-    if not eps: eps = np.exp(-100*np.abs(x1))
-    err = 100*np.abs(x1-x2)/(x1+eps)
-    return np.mean(err)
-
-def explore(df0,device='gpu',n_try=5,model_list=None,st=None):
-    df = df0.copy(deep=1)
-    if model_list is None:
-        if device=='cpu':
-            # model_list = np.union1d(
-            #             [i.replace('-r','') for i in cpu_regressors_list().keys()],
-            #             [i.replace('-c','') for i in cpu_classifiers_list()] TO DO
-            #             )
-            model_list = [i.replace('-r','') for i in cpu_regressors_list().keys()]
-        elif device=='gpu':
-            # model_list = np.union1d(
-            #             [i.replace('-r','') for i in gpu_regressors_list().keys()],
-            #             [i.replace('-c','') for i in gpu_classifiers_list()] TO DO
-            #             )
-            model_list = [i.replace('-r','') for i in gpu_regressors_list().keys()]
-        else:
-            assert 0,'Device is not recognized!'
-
-    isreg = df.nunique()>5 # TODO: should be changed for classifiers
-    nd = df.shape[0]
-    cols = list(df.columns)
-    assert nd>50 , 'The data is too small!'
-    # nsample = min(np.clip(nd/10,50,500).astype(int),nd)
-    # nho = nsample//10
-    nho = min(np.clip(nd/10,2,50).astype(int),nd-1)
-    n_iterate = 10
-    n_try = 5
-
-    dfcomp = pd.DataFrame(columns=['model','try']+cols)
-    idf = 0
-
-    if st:
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        iprog = 0
-        nprog = n_try*len(model_list)
-        progress_bar.progress(iprog)
-        status_text.text(f'Finding the best models using {device} ... {iprog:4.2f}% complete.')
-        
-    for i_try in range(n_try):
-
-        # dfs = df.sample(nsample)
-        normin,normax = get_range(df)
-        masked_ho,hold_outs = do_holdout(df,nho)
-        df = set_range(df,normin,normax)
-        missing_columns = [col for col in df.columns if df[col].isnull().sum() > 0]
-        for i_mdl,mdl in enumerate(model_list):
-            if model_list is None:
-                models = {}
-                for col in missing_columns:
-                    if isreg.loc[col]:
-                        ext = '-r'
-                    else:
-                        ext = '-c'
-                    models[col] = mdl+ext
-                mdl_name = mdl
-            else:
-                models = mdl
-                mdl_name = str(i_mdl)
-            if st:
-                iprog = iprog+1
-                progress_bar.progress(iprog/nprog)
-                status_text.text(f'Finding the best models using {device}, try {i_try}, model {mdl_name} ... {100*iprog/nprog:4.2f}% complete.')
-            masked_hop = masked_ho.copy(deep=True)
-            if device=='cpu':
-                imp = Imputer(masked_hop,models,loss_f=None,fill_method='random',save_history=True)
-                imp.impute(n_iterate,inds=None)
-            else:
-                imp = GImputer(masked_hop,models,loss_f=None,fill_method='random',save_history=True)
-                imp.impute(n_iterate,inds=None)
-            # try:
-            #     imp = Imputer(masked_hop,models,loss_f=None,fill_method='random',save_history=True,st=st)
-            #     imp.impute(n_iterate,inds=None)
-            # except Exception as e:
-            #     print(f'Something went wrong with {mdl_name}. {e}')
-
-            if device=='gpu':
-                imp.to_cpu()
-            imputed = imp.data_frame
-
-            # dfs = reset_range(dfs,normin,normax)
-            imputed = reset_range(imputed,normin,normax)
-
-            res = compare_holdout(imputed,hold_outs,error_rate)
-            dfcomp.loc[idf,'model'] = mdl_name #+ext
-            dfcomp.loc[idf,'try'] = i_try
-            for col in missing_columns:
-                dfcomp.loc[idf,col] = res[col]
-            idf = idf+1
-
-#        print(dfcomp.loc[idf])
-    # print(dfcomp.set_index(['model','try']).mean(level=0).apply(pd.to_numeric, errors='ignore').dtypes)
-    try:
-        best_models = dfcomp.set_index(['model','try']).mean(level=0).apply(pd.to_numeric, errors='ignore').idxmin().to_dict()
-    except:
-        best_models = dfcomp.set_index(['model','try']).groupby(level=0).mean().apply(pd.to_numeric, errors='ignore').idxmin().to_dict()
-    if st: 
-        progress_bar.progress(100)
-        progress_bar.empty()
-        status_text.empty()
-    return best_models,dfcomp
 
 def metric_opt(self,metric_f,truth):
     lsses = []
@@ -998,8 +828,7 @@ def unpack(model, training_config, weights):
 
 def do_holdout(df0,n_hold):
     df = df0+0
-    # cols = df.columns[df.isnull().any()]
-    cols = [col for col in df.columns if df[col].isnull().sum() > 0]
+    cols = df.columns[df.isnull().any()]
     hold_outs = {}
     for col in cols:
         filt = ~df[col].isna()

@@ -29,12 +29,8 @@ setup(
     packages=find_packages(PACKAGE_PATH, "pympute"),
     package_dir={'pympute': 'pympute'},
     include_package_data=True,
-    package_data={'': ['media/*']},
-    scripts=[
-            "scripts/pympute",
-        ],
     install_requires=requires,
-    license='MIT',
+    license='GPLv3+',
     zip_safe=False,
     keywords='pympute',
     classifiers=[
