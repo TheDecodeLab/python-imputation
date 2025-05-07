@@ -38,7 +38,7 @@ pympute 8501
 
 ### Google Colab Installation
 
-For a quick start with the GUI interface, you can use Google Colab:
+For a quick start with the GUI interface, you can use Google Colab and the sample data [here](https://github.com/TheDecodeLab/python-imputation/blob/master/sample_data/breast_cancer_small.csv):
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TheDecodeLab/python-imputation/blob/master/notebooks/pympute.ipynb)
 
