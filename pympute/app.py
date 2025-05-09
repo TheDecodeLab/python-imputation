@@ -119,8 +119,20 @@ if which('nvidia-smi') is None:
     devie = 'cpu'
     msg.toast('Seems like the GPU is on a break. CPU to the rescue!', icon='🐌')
 else:
-    devie = 'gpu'
-    msg.toast('GPU is found! Buckle up!', icon='😍')
+    # devie = 'gpu'
+    # msg.toast('GPU is found! Buckle up!', icon='😍')
+    # Add radio button for device selection
+    devie = st.sidebar.radio(
+        "Select Device",
+        ["gpu", "cpu"],
+        index=0,  # Default to GPU if available
+        help="Choose between GPU (faster) or CPU (more stable) processing"
+    )
+    if devie == 'gpu':
+        msg.toast('GPU is found! Buckle up!', icon='😍')
+    else:
+        msg.toast('Using CPU mode as requested', icon='⚙️')
+
 
 if devie=='cpu':
     all_models = list(cpu_regressors_list().keys())+\
