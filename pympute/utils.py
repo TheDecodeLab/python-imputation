@@ -894,10 +894,6 @@ def explore(df0,device='gpu',n_try=5,model_list=None,st=None):
                 models = mdl+ext
             mdl_name = mdl #str(i_mdl)
             mdl_index = i_mdl
-            if st:
-                iprog = iprog+1
-                progress_bar.progress(iprog/nprog)
-                status_text.text(f'Finding the best models using {device}, try {i_try}, model {mdl_name} ... {100*iprog/nprog:4.2f}% complete.')
             masked_hop = masked_ho.copy(deep=True)
             if device=='cpu':
                 imp = Imputer(masked_hop,models,loss_f=None,fill_method='random',save_history=True)
@@ -924,6 +920,10 @@ def explore(df0,device='gpu',n_try=5,model_list=None,st=None):
             for col in missing_columns:
                 dfcomp.loc[idf,col] = res[col]
             idf = idf+1
+            if st:
+                iprog = iprog+1
+                progress_bar.progress(iprog/nprog)
+                status_text.text(f'Finding the best models using {device}, try {i_try}, model {mdl_name} ... {100*iprog/nprog:4.2f}% complete.')
 
 #        print(dfcomp.loc[idf])
     # print(dfcomp.set_index(['model','try']).mean(level=0).apply(pd.to_numeric, errors='ignore').dtypes)
