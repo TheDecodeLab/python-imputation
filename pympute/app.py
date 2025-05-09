@@ -16,7 +16,7 @@ dirname = os.path.dirname(pympute.__file__)
 session_state = st.session_state
 
 st.sidebar.title('Data imputation tool.')
-st.sidebar.image(os.path.join(dirname,'media/logo.png'), use_column_width=True)
+st.sidebar.image(os.path.join(dirname,'media/logo.png'), use_container_width=True)
 msg = st.toast('Looking for resources...')
 
 #mode = st.radio(
@@ -211,7 +211,7 @@ if uploaded_file is not None:
     if st.sidebar.button('Recommend'):
         imp.explore(1)
         session_state.models = imp.models
-        st.experimental_rerun()        
+        st.rerun()        
         
 #        if regn=='None':
 #            pass
