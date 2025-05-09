@@ -201,11 +201,15 @@ if uploaded_file is not None:
                        **kargs)
 
     # col1, col2 = st.columns(2)
-
+    n_it = st.sidebar.number_input('\# of iteration for imputation', 
+                                  min_value=1, 
+                                  max_value=10, 
+                                  value=1,
+                                  help='Number of times to do iterative imputation for each column')
     # if col1.button('Impute'): 
     if st.sidebar.button('Impute'):
 #        df_ho,hold_outs = do_holdout(df,5)
-        imp.impute(10,inds=None,normalize=norm)
+        imp.impute(n_it=n_it,inds=None,normalize=norm)
         if devie=='cpu':
             pass
         else:
@@ -227,7 +231,7 @@ if uploaded_file is not None:
     
     # if col2.button('Recommend'):
     if st.sidebar.button('Recommend'):
-        imp.explore(n_try=n_try)
+        imp.explore(n_try=n_try,n_iterate=n_it)
         session_state.models = imp.models
         st.rerun()        
         

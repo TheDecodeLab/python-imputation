@@ -381,9 +381,9 @@ class Imputer:
             model = self.model_class(**kargs)
             self.models[col] = model
 
-    def explore(self,n_try=5,model_list=None):
+    def explore(self,n_try=5,n_iterate=10,model_list=None):
         df = self.data_frame0.copy(deep=True)
-        self.models,self.dfcomp = explore(df,device=self.device,n_try=n_try,model_list=model_list,st=self.st)
+        self.models,self.dfcomp = explore(df,device=self.device,n_try=n_try,n_iterate=n_iterate,model_list=model_list,st=self.st)
         return self.models
 
     def impute(self,n_it,inds=None,normalize=True,trsh=-np.inf,**kargs):
@@ -803,6 +803,10 @@ try:
                 newrow = cudf.DataFrame(index=[ilf+i],columns=self.imp_cols,data=clses) #self.cols[inds]
                 # self.loss_frame = self.loss_frame.append(newrow)
                 self.loss_frame = cudf.concat([self.loss_frame, newrow])
+            if normalize:
+                self.data_frame = self.data_frame.to_pandas()
+                self.data_frame = reset_range(self.data_frame,normin,normax)
+                self.data_frame = cudf.from_pandas(self.data_frame)
             pbar.close()
             if self.st:
                 progress_bar.progress(100)
@@ -833,7 +837,7 @@ def error_rate(x1,x2,eps=None):
     err = 100*np.abs(x1-x2)/(x1+eps)
     return np.mean(err)
 
-def explore(df0,device='gpu',n_try=5,model_list=None,st=None):
+def explore(df0,device='gpu',n_try=5,n_iterate=10,model_list=None,st=None):
     df = df0.copy(deep=1)
     if model_list is None:
         if device=='cpu':
@@ -858,7 +862,7 @@ def explore(df0,device='gpu',n_try=5,model_list=None,st=None):
     # nsample = min(np.clip(nd/10,50,500).astype(int),nd)
     # nho = nsample//10
     nho = min(np.clip(nd/10,2,50).astype(int),nd-1)
-    n_iterate = 10
+    # n_iterate = 10
     # n_try = 5
 
     dfcomp = pd.DataFrame(columns=['model','try']+cols)
