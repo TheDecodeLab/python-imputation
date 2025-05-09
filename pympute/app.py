@@ -115,7 +115,7 @@ from pympute import *
 from pathlib import Path
 
 from shutil import which
-if which('nvidia-smi') is None or 1:
+if which('nvidia-smi') is None:
     devie = 'cpu'
     msg.toast('Seems like the GPU is on a break. CPU to the rescue!', icon='🐌')
 else:
@@ -206,10 +206,16 @@ if uploaded_file is not None:
         session_state.df = df0
         session_state.imputed_data = imputed_data
 #        session_state.imputed_data = reset_range(imputed_data,normin,normax)
-
+    # Add number input for n_try before the Recommend button
+    n_try = st.sidebar.number_input('# tries for recommendation', 
+                                  min_value=1, 
+                                  max_value=10, 
+                                  value=1,
+                                  help='Number of times to try different models for each column')
+    
     # if col2.button('Recommend'):
     if st.sidebar.button('Recommend'):
-        imp.explore(1)
+        imp.explore(n_try=n_try)
         session_state.models = imp.models
         st.rerun()        
         

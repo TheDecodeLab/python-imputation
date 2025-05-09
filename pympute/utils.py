@@ -797,6 +797,7 @@ try:
                         self.history[col].append(pred)
 
     #             self.loss_frame.loc[ilf+i,col] = self.loss_f(y_test,pred)
+                clses = cp.array(clses)
                 clses = cp.stack(clses)
                 clses = clses.reshape(1,-1)
                 newrow = cudf.DataFrame(index=[ilf+i],columns=self.imp_cols,data=clses) #self.cols[inds]
@@ -858,7 +859,7 @@ def explore(df0,device='gpu',n_try=5,model_list=None,st=None):
     # nho = nsample//10
     nho = min(np.clip(nd/10,2,50).astype(int),nd-1)
     n_iterate = 10
-    n_try = 5
+    # n_try = 5
 
     dfcomp = pd.DataFrame(columns=['model','try']+cols)
     idf = 0
@@ -889,8 +890,10 @@ def explore(df0,device='gpu',n_try=5,model_list=None,st=None):
                     models[col] = mdl+ext
                 mdl_name = mdl
             else:
-                models = mdl+'-r'
-                mdl_name = mdl #str(i_mdl)
+                ext = '-r'
+                models = mdl+ext
+            mdl_name = mdl #str(i_mdl)
+            mdl_index = i_mdl
             if st:
                 iprog = iprog+1
                 progress_bar.progress(iprog/nprog)
@@ -916,7 +919,7 @@ def explore(df0,device='gpu',n_try=5,model_list=None,st=None):
             imputed = reset_range(imputed,normin,normax)
 
             res = compare_holdout(imputed,hold_outs,error_rate)
-            dfcomp.loc[idf,'model'] = mdl_name #+ext
+            dfcomp.loc[idf,'model'] = mdl_name+ext
             dfcomp.loc[idf,'try'] = i_try
             for col in missing_columns:
                 dfcomp.loc[idf,col] = res[col]
