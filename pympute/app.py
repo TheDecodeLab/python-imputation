@@ -219,7 +219,7 @@ if uploaded_file is not None:
         session_state.imputed_data = imputed_data
 #        session_state.imputed_data = reset_range(imputed_data,normin,normax)
     # Add number input for n_try before the Recommend button
-    n_try = st.sidebar.number_input('# tries for recommendation', 
+    n_try = st.sidebar.number_input('\# of tries for recommendation', 
                                   min_value=1, 
                                   max_value=10, 
                                   value=1,
