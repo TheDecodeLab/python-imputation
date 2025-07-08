@@ -56,11 +56,11 @@ If you use Pympute in your research, please cite our work:
 
 ```bibtex
 @article{pympute,
-    title={Pympute: A Python Package for Data Imputation},
-    author={Alireza Vafaei Sadr, Jiang Li, Wenke Hwang, Mohammed Yeasin, Ming Wang, Harold Lehmann, Ramin Zand, Vida Abedi},
-    journal={},
-    year={},
-    publisher={}
+    title={Pympute: Flexible imputation toolkit for electronic health records},
+    authors={Alireza Vafaei Sadr, Jiang Li, Wenke Hwang, Mohammed Yeasin, Ming Wang, Harold Lehmann, Ramin Zand, Vida Abedi},
+    journal={Scientific Repotrs},
+    year={2025},
+    DOI={10.1038/s41598-025-02276-5}
 }
 ```
 
