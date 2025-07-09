@@ -14,7 +14,41 @@ from sklearn.metrics import r2_score
 
 import matplotlib.patches as mpatches
 from sklearn.neighbors import KernelDensity
+from sklearn.base import ClassifierMixin
+from sklearn.base import RegressorMixin
 
+def is_regressor(model):
+    reg_strs = [
+        "LinearRegression", "SVR", "MBSGDRegressor", "Ridge", "Lasso", "ElasticNet",
+        "KNeighborsRegressor", "RandomForestRegressor", "XGBRegressor"
+    ]
+    model_str = str(model)
+    return isinstance(model, RegressorMixin) or any(r in model_str for r in reg_strs)
+
+def is_classifier(model):
+    """
+    Returns True if the model is a classifier, based on its type or string representation.
+    """
+    clf_strs = [
+        "LogisticRegression", "SVC", "MBSGDClassifier", "KNeighborsClassifier",
+        "RandomForestClassifier", "XGBClassifier"
+    ]
+    model_str = str(model)
+    return isinstance(model, ClassifierMixin) or any(c in model_str for c in clf_strs)
+
+def get_regressor_columns(cols, models):
+    return [
+        col for col in cols
+        if (isinstance(models, dict) and is_regressor(models.get(col, None)))
+        or (not isinstance(models, dict) and str(models).endswith("-r"))
+    ]
+
+def get_classifier_columns(cols, models):
+    return [
+        col for col in cols
+        if (isinstance(models, dict) and is_classifier(models.get(col, None)))
+        or (not isinstance(models, dict) and str(models).endswith("-c"))
+    ]
 #def data_load(prefix='data/',i=0,part = '1st'):
 #    frame = {'data':[],'masked':[]}
 #    template = 'dffinal_repeat_select_widformat_t{}_{}{}.RData'
@@ -337,7 +371,7 @@ class Imputer:
         if type(model) is str:
             self.model_class = get_model(model,gpu=False)
         elif type(model) is dict:
-            self.model_class = {col:get_model(m,gpu=False)() for col,m in model.items()}
+            self.model_class = {col:get_model(m,gpu=False) for col,m in model.items()}
         else:
             self.model_class = model
             pass #TODO check the needed methods
@@ -381,9 +415,10 @@ class Imputer:
             model = self.model_class(**kargs)
             self.models[col] = model
 
-    def explore(self,n_try=5,n_iterate=10,model_list=None):
+    def explore(self,n_try=5,n_iterate=10,n_classes=5,model_list=None):
         df = self.data_frame0.copy(deep=True)
-        self.models,self.dfcomp = explore(df,device=self.device,n_try=n_try,n_iterate=n_iterate,model_list=model_list,st=self.st)
+        self.models,self.dfcomp = explore(df,device=self.device,n_try=n_try,n_iterate=n_iterate,
+                                          n_classes=n_classes,model_list=model_list,st=self.st)
         return self.models
 
     def impute(self,n_it,inds=None,normalize=True,trsh=-np.inf,**kargs):
@@ -394,8 +429,9 @@ class Imputer:
         ilf = self.loss_frame.shape[0]
         
         if normalize:
-            normin,normax = get_range(self.data_frame)
-            self.data_frame = set_range(self.data_frame,normin,normax)            
+            reg_cols = get_regressor_columns(self.imp_cols, self.models)
+            normin,normax = get_range(self.data_frame[reg_cols])
+            self.data_frame[reg_cols] = set_range(self.data_frame[reg_cols],normin,normax)            
         
         nprog = n_it*len(inds)
         pbar = tqdm(total=nprog, position=0, leave=True)
@@ -427,6 +463,7 @@ class Imputer:
                         continue
 
                 x = self.data_frame.drop(columns=[col])
+                x = (x - x.min()) / (x.max() - x.min())
                 y = self.data_frame[col]
 
                 x_train = x[~fisna]
@@ -442,7 +479,11 @@ class Imputer:
                     model = self.model_class()
                     self.models[col] = model
                 else:
-                    model = self.models[col]
+                    model = self.models[col]()
+
+                if is_classifier(model):
+                    y_train = y_train.astype('category')
+                    y_test = y_test.astype('category')
 
                 model.fit(x_train,y_train,**kargs)
                 pred = model.predict(x_test)
@@ -454,7 +495,7 @@ class Imputer:
                 if self.save_history:
                     self.history[col].append(pred)
         
-        if normalize: self.data_frame = reset_range(self.data_frame,normin,normax)
+        if normalize: self.data_frame[reg_cols] = reset_range(self.data_frame[reg_cols],normin,normax)
         pbar.close()
         if self.st:
             progress_bar.progress(100)
@@ -662,7 +703,7 @@ try:
             if type(model) is str:
                 self.model_class = get_model(model,gpu=True)
             elif type(model) is dict:
-                self.model_class = {col:get_model(m,gpu=True)() for col,m in model.items()}
+                self.model_class = {col:get_model(m,gpu=True) for col,m in model.items()}
             else:
                 self.model_class = model
                 pass #TODO check the needed methods
@@ -709,10 +750,13 @@ try:
 
             ilf = self.loss_frame.shape[0]
             if normalize:
-                self.data_frame = self.data_frame.to_pandas()
-                normin,normax = get_range(self.data_frame)
-                self.data_frame = set_range(self.data_frame,normin,normax)
-                self.data_frame = cudf.from_pandas(self.data_frame)
+                # Only normalize columns whose model ends with '-r'
+                reg_cols = get_regressor_columns(self.imp_cols, self.models)
+                if reg_cols:
+                    self.data_frame = self.data_frame.to_pandas()
+                    normin, normax = get_range(self.data_frame[reg_cols])
+                    self.data_frame[reg_cols] = set_range(self.data_frame[reg_cols], normin, normax)
+                    self.data_frame = cudf.from_pandas(self.data_frame)
 
             nprog = n_it*len(inds)
             pbar = tqdm(total=nprog, position=0, leave=True)
@@ -751,6 +795,7 @@ try:
                             continue
 
                     x = self.data_frame.drop(columns=[col])
+                    x = (x - x.min()) / (x.max() - x.min())
                     y = self.data_frame[col]
 
                     # TODO: should be removed later.
@@ -771,12 +816,20 @@ try:
                         model = self.model_class()
                         self.models[col] = model
                     else:
-                        model = self.models[col]
+                        model = self.models[col]()
 
-                    model.fit(x_train,y_train,**kargs)
-                    pred = model.predict(x_test)
-                    if pred.ndim>1:
-                        pred = pred[:,0]
+                    if is_classifier(model):
+                        y_train = y_train.astype(int)
+                        y_test = y_test.astype(int)
+
+                    try:
+                        model.fit(x_train, y_train, **kargs)
+                        pred = model.predict(x_test)
+                        if pred.ndim > 1:
+                            pred = pred[:, 0]
+                    except Exception as e:
+                        print(f"Error occurred while fitting/predicting for column '{col}': {e}")
+                        raise
 
                     nan_filt = np.isnan(pred)
                     if nan_filt.sum()!=0:
@@ -803,9 +856,9 @@ try:
                 newrow = cudf.DataFrame(index=[ilf+i],columns=self.imp_cols,data=clses) #self.cols[inds]
                 # self.loss_frame = self.loss_frame.append(newrow)
                 self.loss_frame = cudf.concat([self.loss_frame, newrow])
-            if normalize:
+            if normalize and reg_cols:
                 self.data_frame = self.data_frame.to_pandas()
-                self.data_frame = reset_range(self.data_frame,normin,normax)
+                self.data_frame[reg_cols] = reset_range(self.data_frame[reg_cols],normin,normax)
                 self.data_frame = cudf.from_pandas(self.data_frame)
             pbar.close()
             if self.st:
@@ -837,8 +890,8 @@ def error_rate(x1,x2,eps=None):
     err = 100*np.abs(x1-x2)/(x1+eps)
     return np.mean(err)
 
-def explore(df0,device='gpu',n_try=5,n_iterate=10,model_list=None,st=None):
-    df = df0.copy(deep=1)
+def explore(df0,device='gpu',n_try=5,n_iterate=10,n_classes=5,model_list=None,st=None):
+    df1 = df0.copy(deep=1)
     if model_list is None:
         if device=='cpu':
             # model_list = np.union1d(
@@ -855,9 +908,9 @@ def explore(df0,device='gpu',n_try=5,n_iterate=10,model_list=None,st=None):
         else:
             assert 0,'Device is not recognized!'
 
-    isreg = df.nunique()>5 # TODO: should be changed for classifiers
-    nd = df.shape[0]
-    cols = list(df.columns)
+    isreg = df1.nunique()>n_classes # TODO: should be changed for classifiers
+    nd = df1.shape[0]
+    # cols = list(df1.columns)
     assert nd>50 , 'The data is too small!'
     # nsample = min(np.clip(nd/10,50,500).astype(int),nd)
     # nho = nsample//10
@@ -865,7 +918,17 @@ def explore(df0,device='gpu',n_try=5,n_iterate=10,model_list=None,st=None):
     # n_iterate = 10
     # n_try = 5
 
-    dfcomp = pd.DataFrame(columns=['model','try']+cols)
+    missing_columns = [col for col in df1.columns if df1[col].isnull().sum() > 0]
+    exts = {}
+    reg_cols = []
+    for col in missing_columns:
+        if isreg.loc[col]:
+            ext = '-r'
+            reg_cols.append(col)
+        else:
+            ext = '-c'
+        exts[col] = ext
+    dfcomp = pd.DataFrame(columns=['model','try']+missing_columns)
     idf = 0
 
     if st:
@@ -877,34 +940,29 @@ def explore(df0,device='gpu',n_try=5,n_iterate=10,model_list=None,st=None):
         status_text.text(f'Finding the best models using {device} ... {iprog:4.2f}% complete.')
         
     for i_try in range(n_try):
-
+        df = df1.copy(deep=1)
         # dfs = df.sample(nsample)
-        normin,normax = get_range(df)
+        normin,normax = get_range(df[reg_cols])
+        df[reg_cols] = set_range(df[reg_cols],normin,normax)
         masked_ho,hold_outs = do_holdout(df,nho)
-        df = set_range(df,normin,normax)
-        missing_columns = [col for col in df.columns if df[col].isnull().sum() > 0]
+        
         for i_mdl,mdl in enumerate(model_list):
-            if model_list is None:
-                models = {}
-                for col in missing_columns:
-                    if isreg.loc[col]:
-                        ext = '-r'
-                    else:
-                        ext = '-c'
-                    models[col] = mdl+ext
-                mdl_name = mdl
-            else:
-                ext = '-r'
-                models = mdl+ext
-            mdl_name = mdl #str(i_mdl)
-            mdl_index = i_mdl
+            # if model_list is None:
+            models = {}
+            for col in missing_columns:
+                models[col] = mdl+exts[col]
+            mdl_name = mdl
+            # else:
+            #     # ext = '-r'
+            #     models = mdl+ext
+            # mdl_name = mdl #str(i_mdl)
+            # mdl_index = i_mdl
             masked_hop = masked_ho.copy(deep=True)
             if device=='cpu':
                 imp = Imputer(masked_hop,models,loss_f=None,fill_method='random',save_history=True)
-                imp.impute(n_iterate,inds=None)
             else:
                 imp = GImputer(masked_hop,models,loss_f=None,fill_method='random',save_history=True)
-                imp.impute(n_iterate,inds=None)
+            imp.impute(n_iterate,normalize=False,inds=None)
             # try:
             #     imp = Imputer(masked_hop,models,loss_f=None,fill_method='random',save_history=True,st=st)
             #     imp.impute(n_iterate,inds=None)
@@ -916,10 +974,10 @@ def explore(df0,device='gpu',n_try=5,n_iterate=10,model_list=None,st=None):
             imputed = imp.data_frame
 
             # dfs = reset_range(dfs,normin,normax)
-            imputed = reset_range(imputed,normin,normax)
+            imputed[reg_cols] = reset_range(imputed[reg_cols],normin,normax)
 
             res = compare_holdout(imputed,hold_outs,error_rate)
-            dfcomp.loc[idf,'model'] = mdl_name+ext
+            dfcomp.loc[idf,'model'] = mdl_name
             dfcomp.loc[idf,'try'] = i_try
             for col in missing_columns:
                 dfcomp.loc[idf,col] = res[col]
@@ -935,6 +993,14 @@ def explore(df0,device='gpu',n_try=5,n_iterate=10,model_list=None,st=None):
         best_models = dfcomp.set_index(['model','try']).mean(level=0).apply(pd.to_numeric, errors='ignore').idxmin().to_dict()
     except:
         best_models = dfcomp.set_index(['model','try']).groupby(level=0).mean().apply(pd.to_numeric, errors='ignore').idxmin().to_dict()
+    
+    # First, add the extensions to all model names
+    for col in missing_columns:
+        best_models[col] = best_models[col] + exts[col]
+    
+    # Then, convert to model classes (not instances) outside the loop
+    best_models = {col: get_model(m, gpu=(device=='gpu')) for col, m in best_models.items()}
+    
     if st: 
         progress_bar.progress(100)
         progress_bar.empty()
@@ -1008,18 +1074,94 @@ def unpack(model, training_config, weights):
     restored_model.set_weights(weights)
     return restored_model
 
-def do_holdout(df0,n_hold):
-    df = df0+0
-    # cols = df.columns[df.isnull().any()]
+# def do_holdout(df0,n_hold):
+#     df = df0+0
+#     # cols = df.columns[df.isnull().any()]
+#     cols = [col for col in df.columns if df[col].isnull().sum() > 0]
+#     hold_outs = {}
+#     for col in cols:
+#         filt = ~df[col].isna()
+#         samples = filt[filt].sample(n_hold)
+#         inds = list(samples.index)
+#         hold_outs[col] = df.loc[inds,col]
+#         df.loc[inds,col] = np.nan
+#     return df,hold_outs
+
+def do_holdout(df0, n_hold, n_classes=20):
+    df = df0 + 0
     cols = [col for col in df.columns if df[col].isnull().sum() > 0]
     hold_outs = {}
+    
     for col in cols:
         filt = ~df[col].isna()
-        samples = filt[filt].sample(n_hold)
-        inds = list(samples.index)
-        hold_outs[col] = df.loc[inds,col]
-        df.loc[inds,col] = np.nan
-    return df,hold_outs
+        available_data = df.loc[filt, col]
+        
+        # Check if this is likely a categorical column (few unique values)
+        if available_data.nunique() < n_classes:
+            # Use stratified sampling to preserve all classes
+            unique_values = available_data.unique()
+            holdout_indices = []
+            
+            # Calculate how many samples per class we need for holdout
+            samples_per_class = max(1, n_hold // len(unique_values))
+            remaining_samples = n_hold - (samples_per_class * len(unique_values))
+            
+            for i, value in enumerate(unique_values):
+                class_indices = available_data[available_data == value].index
+                
+                # Ensure at least one example stays in training for each class
+                if len(class_indices) <= 1:
+                    # Skip holdout for this class if only one example exists
+                    continue
+                
+                # Take samples for holdout, but leave at least one for training
+                max_holdout_for_class = len(class_indices) - 1
+                holdout_for_class = min(samples_per_class, max_holdout_for_class)
+                
+                # Add extra samples to classes if we have remaining samples to distribute
+                if remaining_samples > 0 and holdout_for_class < max_holdout_for_class:
+                    extra = min(remaining_samples, max_holdout_for_class - holdout_for_class)
+                    holdout_for_class += extra
+                    remaining_samples -= extra
+                
+                if holdout_for_class > 0:
+                    class_holdout = class_indices.to_series().sample(holdout_for_class, replace=False)
+                    holdout_indices.extend(class_holdout.tolist())
+            
+            # If we didn't get enough samples, add more from classes that can spare them
+            if len(holdout_indices) < n_hold:
+                remaining_needed = n_hold - len(holdout_indices)
+                already_selected = set(holdout_indices)
+                
+                for value in unique_values:
+                    if remaining_needed <= 0:
+                        break
+                    class_indices = available_data[available_data == value].index
+                    available_for_additional = [idx for idx in class_indices 
+                                               if idx not in already_selected]
+                    
+                    if len(available_for_additional) > 1:  # Keep at least one for training
+                        additional_possible = len(available_for_additional) - 1
+                        additional_take = min(remaining_needed, additional_possible)
+                        if additional_take > 0:
+                            additional_samples = pd.Series(available_for_additional).sample(
+                                additional_take, replace=False)
+                            holdout_indices.extend(additional_samples.tolist())
+                            already_selected.update(additional_samples.tolist())
+                            remaining_needed -= additional_take
+            
+            inds = holdout_indices[:n_hold]  # Ensure we don't exceed n_hold
+            
+        else:
+            # For continuous variables, use random sampling as before
+            samples = filt[filt].sample(min(n_hold, filt.sum()))
+            inds = list(samples.index)
+        
+        if inds:  # Only proceed if we have samples to hold out
+            hold_outs[col] = df.loc[inds, col]
+            df.loc[inds, col] = np.nan
+    
+    return df, hold_outs
 
 def compare_holdout(df,hold_outs,loss_func):
     cols = list(hold_outs.keys())
