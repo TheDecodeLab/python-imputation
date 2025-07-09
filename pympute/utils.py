@@ -67,21 +67,40 @@ def get_range(xx):
     xmax = xx.max()#np.nanmax(xx,axis=0,keepdims=1)
     return xmin,xmax
     
+# def set_range(df,xmin=0,xmax=1,excepts=[]):
+# #     xx = (xx-xmin)/(xmax-xmin)
+#     for col in df.columns:
+#         if col in excepts: continue
+#         if df[col].std()==0: continue
+#         df[col] = (df[col]-xmin[col])/(xmax[col]-xmin[col])
+#     return df
+
+# def reset_range(df,xmin=0,xmax=1,excepts=[]):
+# #     xx = (xx-xmin)/(xmax-xmin)
+#     for col in df.columns:
+#         if col in excepts: continue
+#         if df[col].std()==0: continue
+#         dr = xmax[col]-xmin[col]
+#         df[col] = df[col]*dr+xmin[col]
+#     return df
+
 def set_range(df,xmin=0,xmax=1,excepts=[]):
-#     xx = (xx-xmin)/(xmax-xmin)
+    # Create an explicit copy to avoid SettingWithCopyWarning
+    df = df.copy()
     for col in df.columns:
         if col in excepts: continue
         if df[col].std()==0: continue
-        df[col] = (df[col]-xmin[col])/(xmax[col]-xmin[col])
+        df.loc[:, col] = (df[col]-xmin[col])/(xmax[col]-xmin[col])
     return df
 
 def reset_range(df,xmin=0,xmax=1,excepts=[]):
-#     xx = (xx-xmin)/(xmax-xmin)
+    # Create an explicit copy to avoid SettingWithCopyWarning  
+    df = df.copy()
     for col in df.columns:
         if col in excepts: continue
         if df[col].std()==0: continue
         dr = xmax[col]-xmin[col]
-        df[col] = df[col]*dr+xmin[col]
+        df.loc[:, col] = df[col]*dr+xmin[col]
     return df
 
 def get_mean_std(xx):
@@ -264,7 +283,7 @@ def get_model(model,gpu=False):
         elif model=='XGB-r':
             from xgboost import XGBRegressor
             def XGBRegressor_p(**kargs):
-                return XGBRegressor(tree_method='gpu_hist',**kargs)
+                return XGBRegressor(tree_method='gpu_hist', copy_X=False, **kargs)
             model_class = XGBRegressor_p
         elif model=='LR-c':
             from cuml.linear_model import LogisticRegression
@@ -284,7 +303,7 @@ def get_model(model,gpu=False):
         elif model=='XGB-c':
             from xgboost import XGBClassifier
             def XGBClassifier_p(**kargs):
-                return XGBClassifier(tree_method='gpu_hist',**kargs)
+                return XGBClassifier(tree_method='gpu_hist', copy_X=False, **kargs)
             model_class = XGBClassifier_p
 
         else:
@@ -840,6 +859,10 @@ try:
 
                     c_loss = self.loss_f(y_test,pred)
                     clses.append(c_loss)
+                    # Ensure dtype compatibility for cuDF
+                    if is_classifier(model):
+                        # For classifiers, ensure pred has the same dtype as the original column
+                        pred = pred.astype(self.data_frame[col].dtype)
                     if type(pred) is cudf.Series:
                         pred = pred.to_numpy()
                     self.data_frame.loc[fisna,col] = pred
